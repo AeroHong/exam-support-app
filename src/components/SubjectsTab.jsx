@@ -1,405 +1,918 @@
-import { useEffect, useState } from "react";
-import { deleteSubject, loadSubjects, saveSubject } from "../lib/firestoreData";
+import { useEffect, useRef, useState } from "react";
+import * as XLSX from "xlsx";
+import {
+  bulkSaveSubjectsByYear,
+  deleteSubject,
+  deleteSubjectsByYear,
+  loadSubjects,
+  saveSubject,
+} from "../lib/firestoreData";
 
-const GRADE_FILTERS = [
-  { key: "all", label: "전체" },
-  { key: "1", label: "1학년" },
-  { key: "2", label: "2학년" },
-  { key: "3", label: "3학년" },
+// ─── 상수 ─────────────────────────────────────────────────────────────────────
+
+const SUBJECT_GROUPS = [
+  "국어", "수학", "영어", "사회역사/도덕포함", "과학",
+  "체육", "예술", "교양", "기술가정/정보", "제2외국어/한문",
 ];
+const COURSE_TYPES = ["공통", "일반", "융합", "진로"];
 
-const EMPTY_FORM = {
-  name: "",
-  grade: "1",
-  type: "common",
-  hasExam: true,
-  isEssay: false,
-  duration: "45",
+// Excel 파서 내부 상수
+const _BLOCK_PAT = /[\[\(]택\s*(\d+)\s*[\]\)]/;
+const _VALID_CT = new Set(["공통", "일반", "융합", "진로"]);
+const _GS_COLS = [[1, 1], [1, 2], [2, 1], [2, 2], [3, 1], [3, 2]];
+
+// ─── 스타일 ──────────────────────────────────────────────────────────────────
+
+const s = {
+  page:        { padding: "1.5rem", maxWidth: "1100px" },
+  pageHeader:  { display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: "1.25rem" },
+  eyebrow:     { fontSize: "0.75rem", fontWeight: 600, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.25rem" },
+  pageTitle:   { fontSize: "1.5rem", fontWeight: 800, color: "#111827", margin: 0 },
+  btnRow:      { display: "flex", gap: "0.5rem", alignItems: "center" },
+
+  primaryBtn:  { padding: "0.45rem 1rem", backgroundColor: "#4f46e5", color: "#fff", border: "none", borderRadius: "7px", cursor: "pointer", fontSize: "0.85rem", fontWeight: 600 },
+  outlineBtn:  { padding: "0.45rem 1rem", backgroundColor: "#fff", color: "#374151", border: "1px solid #d1d5db", borderRadius: "7px", cursor: "pointer", fontSize: "0.85rem" },
+  dangerBtn:   { padding: "0.35rem 0.75rem", backgroundColor: "#fff", color: "#dc2626", border: "1px solid #dc2626", borderRadius: "6px", cursor: "pointer", fontSize: "0.78rem", fontWeight: 600 },
+
+  filterRow:   { display: "flex", gap: "0.4rem", marginBottom: "0.75rem", alignItems: "center", flexWrap: "wrap" },
+  divider:     { width: "1px", height: "20px", backgroundColor: "#e5e7eb", margin: "0 0.2rem" },
+  tab:         { padding: "0.3rem 0.75rem", border: "1px solid #e5e7eb", borderRadius: "999px", cursor: "pointer", fontSize: "0.82rem", backgroundColor: "#fff", color: "#6b7280" },
+  tabActive:   { padding: "0.3rem 0.75rem", border: "1px solid #4f46e5", borderRadius: "999px", cursor: "pointer", fontSize: "0.82rem", backgroundColor: "#eef2ff", color: "#4f46e5", fontWeight: 700 },
+  badge:       { display: "inline-block", fontSize: "0.72rem", fontWeight: 600, backgroundColor: "#e5e7eb", color: "#374151", borderRadius: "999px", padding: "0.05rem 0.45rem", marginLeft: "0.3rem" },
+  badgeActive: { display: "inline-block", fontSize: "0.72rem", fontWeight: 600, backgroundColor: "#c7d2fe", color: "#3730a3", borderRadius: "999px", padding: "0.05rem 0.45rem", marginLeft: "0.3rem" },
+  filterSelect:{ padding: "0.3rem 0.6rem", border: "1px solid #d1d5db", borderRadius: "6px", fontSize: "0.82rem", backgroundColor: "#fff", cursor: "pointer" },
+
+  table:       { width: "100%", borderCollapse: "collapse", fontSize: "0.875rem" },
+  thead:       { backgroundColor: "#f9fafb" },
+  th:          { padding: "0.5rem 0.75rem", fontWeight: 700, color: "#374151", textAlign: "left", borderBottom: "2px solid #e5e7eb", fontSize: "0.8rem", whiteSpace: "nowrap" },
+  thRight:     { padding: "0.5rem 0.75rem", fontWeight: 700, color: "#374151", textAlign: "right", borderBottom: "2px solid #e5e7eb" },
+  tr:          { borderBottom: "1px solid #f3f4f6" },
+  td:          { padding: "0.4rem 0.75rem", color: "#111827", verticalAlign: "middle" },
+  tdMuted:     { padding: "0.4rem 0.75rem", color: "#6b7280", fontSize: "0.82rem", verticalAlign: "middle" },
+  tdRight:     { padding: "0.4rem 0.75rem", textAlign: "right", verticalAlign: "middle", whiteSpace: "nowrap" },
+  emptyRow:    { textAlign: "center", padding: "2.5rem", color: "#9ca3af", fontSize: "0.9rem" },
+
+  badgeSpec:   { display: "inline-block", fontSize: "0.72rem", fontWeight: 600, backgroundColor: "#dbeafe", color: "#1d4ed8", borderRadius: "999px", padding: "0.1rem 0.55rem" },
+  badgeSel:    { display: "inline-block", fontSize: "0.72rem", fontWeight: 600, backgroundColor: "#dcfce7", color: "#16a34a", borderRadius: "999px", padding: "0.1rem 0.55rem" },
+
+  editBtn:     { padding: "0.2rem 0.55rem", backgroundColor: "#fff", color: "#4f46e5", border: "1px solid #c7d2fe", borderRadius: "5px", cursor: "pointer", fontSize: "0.75rem", marginRight: "0.3rem" },
+  deleteBtn:   { padding: "0.2rem 0.55rem", backgroundColor: "#fff", color: "#dc2626", border: "1px solid #fecaca", borderRadius: "5px", cursor: "pointer", fontSize: "0.75rem" },
+
+  notice:      { padding: "0.6rem 1rem", borderRadius: "7px", fontSize: "0.82rem", fontWeight: 600, marginBottom: "0.75rem", display: "flex", justifyContent: "space-between", alignItems: "center" },
+  noticeOk:    { backgroundColor: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0" },
+  noticeErr:   { backgroundColor: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca" },
+
+  backdrop:    { position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 },
+  modal:       { backgroundColor: "#fff", borderRadius: "12px", padding: "1.5rem", width: "min(560px, 95vw)", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" },
+  modalTitle:  { fontSize: "1.1rem", fontWeight: 800, color: "#111827", marginBottom: "1.25rem" },
+  label:       { display: "block", fontSize: "0.78rem", fontWeight: 600, color: "#374151", marginBottom: "0.3rem" },
+  input:       { width: "100%", padding: "0.45rem 0.75rem", border: "1px solid #d1d5db", borderRadius: "7px", fontSize: "0.875rem", boxSizing: "border-box", outline: "none" },
+  mSelect:     { width: "100%", padding: "0.45rem 0.75rem", border: "1px solid #d1d5db", borderRadius: "7px", fontSize: "0.875rem", boxSizing: "border-box", backgroundColor: "#fff" },
+  grid2:       { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem", marginBottom: "0.75rem" },
+  grid3:       { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem", marginBottom: "0.75rem" },
+  fgroup:      { marginBottom: "0.75rem" },
+  boxSpec:     { backgroundColor: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: "8px", padding: "0.75rem", marginBottom: "0.75rem" },
+  boxSel:      { backgroundColor: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: "8px", padding: "0.75rem", marginBottom: "0.75rem" },
+  boxLabel:    { fontSize: "0.75rem", fontWeight: 700, marginBottom: "0.5rem" },
+  modalActions:{ display: "flex", justifyContent: "flex-end", gap: "0.5rem", marginTop: "1.25rem" },
 };
 
-/**
- * @param {{ schoolId: string }} props
- */
-export default function SubjectsTab({ schoolId }) {
-  const [subjects, setSubjects] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-  const [gradeFilter, setGradeFilter] = useState("all");
+// ─── 유틸 ─────────────────────────────────────────────────────────────────────
 
-  // 편집 상태: null = 폼 닫힘 / "new" = 신규 추가 / subject.id = 수정 중
-  const [editingId, setEditingId] = useState(null);
-  const [form, setForm] = useState(EMPTY_FORM);
-  const [saving, setSaving] = useState(false);
+function calcCurrentGrade(entryYear) {
+  const now = new Date();
+  const schoolYear = now.getMonth() >= 2 ? now.getFullYear() : now.getFullYear() - 1;
+  const g = schoolYear - entryYear + 1;
+  return g >= 1 && g <= 3 ? g : null;
+}
 
-  // ── 데이터 로드 ──────────────────────────────────────────
-  useEffect(() => {
-    if (!schoolId) return;
-    setLoading(true);
-    loadSubjects(schoolId)
-      .then((data) => {
-        setSubjects(sortSubjects(data));
-        setError("");
-      })
-      .catch(() => setError("과목 목록을 불러오지 못했습니다."))
-      .finally(() => setLoading(false));
-  }, [schoolId]);
+function extractEntryYear(filename) {
+  const m = filename.match(/20(\d{2})/);
+  return m ? 2000 + parseInt(m[1]) : null;
+}
 
-  function sortSubjects(list) {
-    return [...list].sort((a, b) => {
-      if (a.grade !== b.grade) return a.grade - b.grade;
-      return a.name.localeCompare(b.name, "ko");
-    });
+function scheduleLabel(subject) {
+  if (!subject.category) return "—";
+  if (subject.category === "학교지정") {
+    return `${subject.grade}학년 ${subject.semester}학기`;
   }
+  if (subject.selectionBlock) {
+    const { grade, semester, pickCount, blockNumber } = subject.selectionBlock;
+    return `${grade}학년 ${semester}학기 [택${pickCount}] B${blockNumber}`;
+  }
+  return "—";
+}
 
-  function flash(msg, isError = false) {
-    if (isError) {
-      setError(msg);
-      setSuccess("");
-    } else {
-      setSuccess(msg);
-      setError("");
+function sortSubjects(list) {
+  return [...list].sort((a, b) => {
+    if (a.grade !== b.grade) return (a.grade || 0) - (b.grade || 0);
+    if (a.category !== b.category) return a.category === "학교지정" ? -1 : 1;
+    const sgA = a.subjectGroup || "", sgB = b.subjectGroup || "";
+    if (sgA !== sgB) return sgA.localeCompare(sgB, "ko");
+    return (a.name || "").localeCompare(b.name || "", "ko");
+  });
+}
+
+// ─── Excel 파서 (OmniSchool course_service.py 이식) ────────────────────────────
+
+function _buildMergedMap(ws) {
+  const map = {};
+  for (const merge of (ws["!merges"] || [])) {
+    const addr = XLSX.utils.encode_cell({ r: merge.s.r, c: merge.s.c });
+    const cell = ws[addr];
+    if (cell?.v != null) {
+      const val = String(cell.v).trim();
+      for (let r = merge.s.r; r <= merge.e.r; r++)
+        for (let c = merge.s.c; c <= merge.e.c; c++)
+          map[`${r}:${c}`] = val;
     }
-    setTimeout(() => {
-      setError("");
-      setSuccess("");
-    }, 3000);
   }
+  return map;
+}
 
-  // ── 필터링된 목록 ────────────────────────────────────────
-  const filtered = gradeFilter === "all"
-    ? subjects
-    : subjects.filter((s) => String(s.grade) === gradeFilter);
-
-  // ── 폼 열기 ─────────────────────────────────────────────
-  function openNew() {
-    setEditingId("new");
-    setForm(EMPTY_FORM);
+function _readAllRows(ws) {
+  if (!ws["!ref"]) return [];
+  const merged = _buildMergedMap(ws);
+  const rng = XLSX.utils.decode_range(ws["!ref"]);
+  const rows = [];
+  for (let r = rng.s.r; r <= rng.e.r; r++) {
+    const row = [];
+    for (let c = rng.s.c; c <= rng.e.c; c++) {
+      const key = `${r}:${c}`;
+      if (merged[key] !== undefined) {
+        row.push(merged[key]);
+      } else {
+        const cell = ws[XLSX.utils.encode_cell({ r, c })];
+        row.push(cell?.v != null ? String(cell.v).trim() : "");
+      }
+    }
+    rows.push(row);
   }
+  return rows;
+}
 
-  function openEdit(subject) {
-    setEditingId(subject.id);
-    setForm({
-      name: subject.name,
-      grade: String(subject.grade),
-      type: subject.type,
-      hasExam: Boolean(subject.hasExam),
-      isEssay: Boolean(subject.isEssay),
-      duration: String(subject.duration),
+function _detectLayout(headerRow) {
+  let sgCol = 1;
+  for (let i = 0; i < headerRow.length; i++) {
+    const v = String(headerRow[i] || "").replace(/\n/g, " ").trim();
+    if (v.includes("교과") && v.includes("군")) { sgCol = i; break; }
+  }
+  const gs = sgCol + 5;
+  return { sgCol, ctCol: sgCol + 1, nmCol: sgCol + 2, bcCol: sgCol + 3, crCol: sgCol + 4, gsCol: gs, descCol: gs + 6 };
+}
+
+function _normCat(raw) {
+  const c = (raw || "").replace(/\n/g, " ").trim();
+  if (c.includes("지정")) return "학교지정";
+  if (c.includes("선택")) return "학생선택";
+  return null;
+}
+
+function parseEducationExcel(arrayBuffer, targetGrade) {
+  const wb = XLSX.read(new Uint8Array(arrayBuffer), { type: "array" });
+
+  // 구분 헤더가 있는 시트 탐색
+  let ws = null;
+  outer: for (const name of wb.SheetNames) {
+    const sheet = wb.Sheets[name];
+    if (!sheet["!ref"]) continue;
+    const rng = XLSX.utils.decode_range(sheet["!ref"]);
+    for (let r = rng.s.r; r <= Math.min(rng.s.r + 9, rng.e.r); r++) {
+      const cell = sheet[XLSX.utils.encode_cell({ r, c: 0 })];
+      if (cell && String(cell.v || "").trim() === "구분") { ws = sheet; break outer; }
+    }
+  }
+  ws = ws || wb.Sheets[wb.SheetNames[0]];
+
+  const rows = _readAllRows(ws);
+  const headerIdx = rows.findIndex(row => row[0] === "구분");
+  if (headerIdx === -1) throw new Error("헤더 행('구분')을 찾을 수 없습니다. 교육청 제출 형식(.xlsx)인지 확인하세요.");
+
+  const { sgCol, ctCol, nmCol, bcCol, crCol, gsCol, descCol } = _detectLayout(rows[headerIdx]);
+  const g = (row, col) => col < row.length ? (row[col] || "") : "";
+
+  const courses = [], errors = [];
+  let curCat = "", curSg = "", curSb = null;
+  const bt = {}; // blockTracker: key → { val, num }
+
+  for (let i = headerIdx + 2; i < rows.length; i++) {
+    const c = rows[i];
+
+    const newCat = _normCat(g(c, 0));
+    if (newCat) curCat = newCat;
+    const rawSg = g(c, sgCol);
+    if (rawSg && !_VALID_CT.has(rawSg)) curSg = rawSg;
+
+    const name = g(c, nmCol);
+    const ct = g(c, ctCol);
+
+    if (!name || ["합계", "과목 수", "과목"].includes(name)) continue;
+    if (/^-*[\d.]+$/.test(name)) continue;
+    if (!_VALID_CT.has(ct) || !curCat || !curSg) continue;
+
+    let bc = 0, cr = 0;
+    try {
+      const rb = g(c, bcCol), rc = g(c, crCol);
+      bc = rb ? Math.round(parseFloat(rb)) : 0;
+      cr = rc ? Math.round(parseFloat(rc)) : 0;
+    } catch {
+      errors.push(`행 ${i + 1} (${name}): 학점 값 오류`);
+      continue;
+    }
+    if (!bc || !cr) continue;
+
+    let schedule = null, selBlock = null;
+    const desc = g(c, descCol);
+
+    for (let off = 0; off < _GS_COLS.length; off++) {
+      const [grade, sem] = _GS_COLS[off];
+      const val = g(c, gsCol + off);
+      if (!val) continue;
+      const m = _BLOCK_PAT.exec(val);
+      if (m) {
+        const key = `${grade}:${sem}`;
+        if (!bt[key]) bt[key] = { val, num: 1 };
+        else if (bt[key].val !== val) bt[key] = { val, num: bt[key].num + 1 };
+        selBlock = { grade, semester: sem, pickCount: parseInt(m[1]), blockNumber: bt[key].num };
+        curSb = selBlock;
+        break;
+      }
+      if (curCat === "학교지정" && /^[\d.]+$/.test(val)) {
+        schedule = { targetGrade: grade, semester: sem };
+        break;
+      }
+    }
+
+    if (curCat === "학교지정") {
+      if (!schedule) continue;
+      if (targetGrade != null && schedule.targetGrade !== targetGrade) continue;
+    }
+    if (curCat === "학생선택") {
+      selBlock = curSb;
+      if (!selBlock) continue;
+      if (targetGrade != null && selBlock.grade !== targetGrade) continue;
+    }
+
+    courses.push({
+      name,
+      subjectGroup: curSg,
+      courseType: ct,
+      category: curCat,
+      grade: curCat === "학교지정" ? schedule.targetGrade : selBlock.grade,
+      semester: curCat === "학교지정" ? schedule.semester : selBlock.semester,
+      credits: cr,
+      baseCredits: bc,
+      selectionBlock: curCat === "학생선택" ? selBlock : null,
+      description: desc,
     });
   }
 
-  function cancelEdit() {
-    setEditingId(null);
-    setForm(EMPTY_FORM);
+  return { courses, errors };
+}
+
+// ─── SubjectModal (추가/수정) ──────────────────────────────────────────────────
+
+function SubjectModal({ subject, onClose, onSave }) {
+  const isEdit = Boolean(subject?.id);
+  const curYear = new Date().getFullYear();
+
+  const [form, setForm] = useState(() => subject ? {
+    name: subject.name || "",
+    subjectGroup: subject.subjectGroup || "국어",
+    courseType: subject.courseType || "일반",
+    category: subject.category || "학교지정",
+    grade: subject.grade || 1,
+    semester: subject.semester || 1,
+    credits: subject.credits || 3,
+    baseCredits: subject.baseCredits || 4,
+    selectionBlock: subject.selectionBlock || null,
+    description: subject.description || "",
+    entryYear: subject.entryYear || curYear,
+  } : {
+    name: "",
+    subjectGroup: "국어",
+    courseType: "일반",
+    category: "학교지정",
+    grade: 1,
+    semester: 1,
+    credits: 3,
+    baseCredits: 4,
+    selectionBlock: null,
+    description: "",
+    entryYear: curYear,
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const set = (key, val) => setForm(p => ({ ...p, [key]: val }));
+
+  function handleCategoryChange(cat) {
+    setForm(p => ({
+      ...p,
+      category: cat,
+      selectionBlock: cat === "학생선택"
+        ? { grade: 2, semester: 1, pickCount: 5, blockNumber: 1 }
+        : null,
+      grade: cat === "학교지정" ? (p.grade || 1) : (p.selectionBlock?.grade || 2),
+    }));
   }
 
-  // ── 저장 ────────────────────────────────────────────────
-  async function handleSave() {
-    const name = form.name.trim();
-    const grade = Number(form.grade);
-    const duration = Number(form.duration);
-    if (!name) return flash("과목명을 입력하세요.", true);
-    if (![1, 2, 3].includes(grade)) return flash("학년을 선택하세요.", true);
-    if (!duration || duration < 1) return flash("시험시간은 1분 이상이어야 합니다.", true);
+  function setSb(patch) {
+    setForm(p => ({
+      ...p,
+      selectionBlock: { ...(p.selectionBlock || { grade: 2, semester: 1, pickCount: 5, blockNumber: 1 }), ...patch },
+    }));
+  }
 
-    const subjectData = {
-      ...(editingId !== "new" && { id: editingId }),
-      name,
-      grade,
-      type: form.type,
-      hasExam: form.hasExam,
-      isEssay: form.isEssay,
-      duration,
-    };
-
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!form.name.trim()) { setError("과목명을 입력하세요."); return; }
     setSaving(true);
     try {
-      const savedId = await saveSubject(schoolId, subjectData);
-      const finalData = { ...subjectData, id: editingId === "new" ? savedId : editingId };
-      const updated = editingId === "new"
-        ? [...subjects, finalData]
-        : subjects.map((s) => (s.id === editingId ? finalData : s));
-      setSubjects(sortSubjects(updated));
-      cancelEdit();
-      flash(editingId === "new" ? "과목이 추가되었습니다." : "과목이 수정되었습니다.");
-    } catch {
-      flash("저장 중 오류가 발생했습니다.", true);
+      await onSave({
+        ...(isEdit && { id: subject.id }),
+        ...form,
+        name: form.name.trim(),
+        grade: Number(form.grade),
+        semester: Number(form.semester),
+        credits: Number(form.credits),
+        baseCredits: Number(form.baseCredits),
+        entryYear: Number(form.entryYear),
+      });
+      onClose();
+    } catch (err) {
+      setError("저장 실패: " + err.message);
     } finally {
       setSaving(false);
     }
   }
 
-  // ── 고사여부 즉시 토글 ───────────────────────────────────
-  async function handleToggleExam(subject) {
-    const updated = { ...subject, hasExam: !subject.hasExam };
-    // 낙관적 업데이트
-    setSubjects((prev) =>
-      sortSubjects(prev.map((s) => (s.id === subject.id ? updated : s))),
-    );
-    try {
-      await saveSubject(schoolId, updated);
-    } catch {
-      // 롤백
-      setSubjects((prev) =>
-        sortSubjects(prev.map((s) => (s.id === subject.id ? subject : s))),
-      );
-      flash("고사 여부 변경에 실패했습니다.", true);
-    }
-  }
-
-  // ── 삭제 ────────────────────────────────────────────────
-  async function handleDelete(subject) {
-    if (!window.confirm(`"${subject.name}" 과목을 삭제하시겠습니까?`)) return;
-    try {
-      await deleteSubject(schoolId, subject.id);
-      setSubjects((prev) => prev.filter((s) => s.id !== subject.id));
-      flash("과목이 삭제되었습니다.");
-    } catch {
-      flash("삭제 중 오류가 발생했습니다.", true);
-    }
-  }
-
-  // ── 렌더 ────────────────────────────────────────────────
   return (
-    <div className="panel">
-      {/* 메시지 */}
-      {error && (
-        <p className="top-message error mb-3">{error}</p>
-      )}
-      {success && (
-        <p className="top-message mb-3" style={{ background: "#f0fdf4", color: "#15803d" }}>
-          {success}
-        </p>
-      )}
+    <div style={s.backdrop} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={s.modal}>
+        <p style={s.modalTitle}>{isEdit ? "과목 수정" : "과목 추가"}</p>
+        <form onSubmit={handleSubmit}>
 
-      {/* 섹션 헤더 */}
-      <div className="section-head">
-        <h2>과목 관리</h2>
-        {editingId === null && (
-          <button type="button" className="primary-button" onClick={openNew}>
-            + 과목 추가
-          </button>
-        )}
-      </div>
-
-      {/* 학년 필터 탭 */}
-      <div className="flex gap-2 mb-4 flex-wrap">
-        {GRADE_FILTERS.map((gf) => (
-          <button
-            key={gf.key}
-            type="button"
-            className={`chip ${gradeFilter === gf.key ? "chip-active" : ""}`}
-            onClick={() => setGradeFilter(gf.key)}
-          >
-            {gf.label}
-          </button>
-        ))}
-      </div>
-
-      {/* 신규 추가 인라인 폼 */}
-      {editingId === "new" && (
-        <SubjectForm
-          form={form}
-          setForm={setForm}
-          onSave={handleSave}
-          onCancel={cancelEdit}
-          saving={saving}
-        />
-      )}
-
-      {/* 테이블 */}
-      {loading ? (
-        <p className="text-slate-500 text-sm py-6 text-center">불러오는 중...</p>
-      ) : filtered.length === 0 ? (
-        <p className="text-slate-400 text-sm py-6 text-center">
-          {gradeFilter === "all" ? "등록된 과목이 없습니다." : "해당 학년 과목이 없습니다."}
-        </p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-200 text-slate-500 text-left">
-                <th className="pb-2 pr-3 font-semibold">학년</th>
-                <th className="pb-2 pr-3 font-semibold">과목명</th>
-                <th className="pb-2 pr-3 font-semibold">구분</th>
-                <th className="pb-2 pr-3 font-semibold text-center">고사여부</th>
-                <th className="pb-2 pr-3 font-semibold text-center">서술형</th>
-                <th className="pb-2 pr-3 font-semibold text-right">시험시간</th>
-                <th className="pb-2 pr-2 font-semibold text-center">수정</th>
-                <th className="pb-2 font-semibold text-center">삭제</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((subject) => (
-                <>
-                  <tr
-                    key={subject.id}
-                    className="border-b border-slate-100 hover:bg-slate-50 transition-colors"
-                  >
-                    <td className="py-2 pr-3 text-slate-600">{subject.grade}학년</td>
-                    <td className="py-2 pr-3 font-medium">{subject.name}</td>
-                    <td className="py-2 pr-3 text-slate-600">
-                      {subject.type === "common" ? "공통" : "선택"}
-                    </td>
-                    <td className="py-2 pr-3 text-center">
-                      <input
-                        type="checkbox"
-                        className="w-4 h-4 cursor-pointer accent-amber-500"
-                        checked={Boolean(subject.hasExam)}
-                        onChange={() => handleToggleExam(subject)}
-                        disabled={editingId !== null && editingId !== subject.id}
-                        title="고사 여부를 바로 변경할 수 있습니다"
-                      />
-                    </td>
-                    <td className="py-2 pr-3 text-center">
-                      {subject.isEssay ? (
-                        <span className="inline-block rounded-full bg-sky-100 text-sky-700 text-xs px-2 py-0.5 font-semibold">
-                          포함
-                        </span>
-                      ) : (
-                        <span className="text-slate-300 text-xs">-</span>
-                      )}
-                    </td>
-                    <td className="py-2 pr-3 text-right text-slate-600">{subject.duration}분</td>
-                    <td className="py-2 pr-2 text-center">
-                      <button
-                        type="button"
-                        className="secondary-button text-xs px-3 py-1"
-                        onClick={() => openEdit(subject)}
-                        disabled={editingId !== null}
-                      >
-                        수정
-                      </button>
-                    </td>
-                    <td className="py-2 text-center">
-                      <button
-                        type="button"
-                        className="text-xs px-3 py-1 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 transition-colors disabled:opacity-40"
-                        onClick={() => handleDelete(subject)}
-                        disabled={editingId !== null}
-                      >
-                        삭제
-                      </button>
-                    </td>
-                  </tr>
-                  {/* 수정 인라인 폼 */}
-                  {editingId === subject.id && (
-                    <tr key={`${subject.id}-edit`}>
-                      <td colSpan={8} className="py-2">
-                        <SubjectForm
-                          form={form}
-                          setForm={setForm}
-                          onSave={handleSave}
-                          onCancel={cancelEdit}
-                          saving={saving}
-                        />
-                      </td>
-                    </tr>
-                  )}
-                </>
+          {/* 구분 */}
+          <div style={s.fgroup}>
+            <label style={s.label}>구분</label>
+            <div style={{ display: "flex", gap: "1.5rem" }}>
+              {["학교지정", "학생선택"].map(cat => (
+                <label key={cat} style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontSize: "0.875rem" }}>
+                  <input type="radio" name="category" checked={form.category === cat}
+                    onChange={() => handleCategoryChange(cat)} />
+                  {cat}
+                </label>
               ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+            </div>
+          </div>
+
+          {/* 교과군 + 과목구분 */}
+          <div style={s.grid2}>
+            <div>
+              <label style={s.label}>교과(군)</label>
+              <select style={s.mSelect} value={form.subjectGroup} onChange={e => set("subjectGroup", e.target.value)}>
+                {SUBJECT_GROUPS.map(g => <option key={g}>{g}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={s.label}>과목구분</label>
+              <select style={s.mSelect} value={form.courseType} onChange={e => set("courseType", e.target.value)}>
+                {COURSE_TYPES.map(t => <option key={t}>{t}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* 과목명 */}
+          <div style={s.fgroup}>
+            <label style={s.label}>과목명</label>
+            <input style={s.input} type="text" required placeholder="예: 공통국어1"
+              value={form.name} onChange={e => set("name", e.target.value)} />
+          </div>
+
+          {/* 입학년도 + 학점 */}
+          <div style={s.grid3}>
+            <div>
+              <label style={s.label}>입학년도</label>
+              <input style={s.input} type="number" min={2020} max={2035}
+                value={form.entryYear} onChange={e => set("entryYear", e.target.value)} />
+            </div>
+            <div>
+              <label style={s.label}>기본학점</label>
+              <input style={s.input} type="number" min={1} max={8}
+                value={form.baseCredits} onChange={e => set("baseCredits", e.target.value)} />
+            </div>
+            <div>
+              <label style={s.label}>운영학점</label>
+              <input style={s.input} type="number" min={1} max={8}
+                value={form.credits} onChange={e => set("credits", e.target.value)} />
+            </div>
+          </div>
+
+          {/* 학교지정: 개설 학기 */}
+          {form.category === "학교지정" && (
+            <div style={s.boxSpec}>
+              <p style={{ ...s.boxLabel, color: "#1d4ed8" }}>개설 학기 (학교지정)</p>
+              <div style={s.grid2}>
+                <div>
+                  <label style={s.label}>학년</label>
+                  <select style={s.mSelect} value={form.grade}
+                    onChange={e => set("grade", Number(e.target.value))}>
+                    {[1, 2, 3].map(g => <option key={g} value={g}>{g}학년</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={s.label}>학기</label>
+                  <select style={s.mSelect} value={form.semester}
+                    onChange={e => set("semester", Number(e.target.value))}>
+                    {[1, 2].map(sm => <option key={sm} value={sm}>{sm}학기</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 학생선택: 블록 설정 */}
+          {form.category === "학생선택" && (
+            <div style={s.boxSel}>
+              <p style={{ ...s.boxLabel, color: "#16a34a" }}>선택 블록 (학생선택)</p>
+              <div style={s.grid3}>
+                <div>
+                  <label style={s.label}>학년</label>
+                  <select style={s.mSelect} value={form.selectionBlock?.grade ?? 2}
+                    onChange={e => setSb({ grade: Number(e.target.value) })}>
+                    {[2, 3].map(g => <option key={g} value={g}>{g}학년</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={s.label}>학기</label>
+                  <select style={s.mSelect} value={form.selectionBlock?.semester ?? 1}
+                    onChange={e => setSb({ semester: Number(e.target.value) })}>
+                    {[1, 2].map(sm => <option key={sm} value={sm}>{sm}학기</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label style={s.label}>택N</label>
+                  <input style={s.input} type="number" min={1} max={10}
+                    value={form.selectionBlock?.pickCount ?? 5}
+                    onChange={e => setSb({ pickCount: Number(e.target.value) })} />
+                </div>
+              </div>
+              <div>
+                <label style={s.label}>블록 번호</label>
+                <input style={s.input} type="number" min={1} max={10}
+                  value={form.selectionBlock?.blockNumber ?? 1}
+                  onChange={e => setSb({ blockNumber: Number(e.target.value) })} />
+              </div>
+            </div>
+          )}
+
+          {/* 비고 */}
+          <div style={s.fgroup}>
+            <label style={s.label}>비고</label>
+            <input style={s.input} type="text" placeholder="특이사항 (선택)"
+              value={form.description} onChange={e => set("description", e.target.value)} />
+          </div>
+
+          {error && (
+            <p style={{ ...s.notice, ...s.noticeErr, marginBottom: "0.5rem" }}>{error}</p>
+          )}
+          <div style={s.modalActions}>
+            <button type="button" style={s.outlineBtn} onClick={onClose}>취소</button>
+            <button type="submit" style={s.primaryBtn} disabled={saving}>
+              {saving ? "저장 중…" : isEdit ? "수정 완료" : "추가"}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
 
-// ── 인라인 폼 서브컴포넌트 ────────────────────────────────
-function SubjectForm({ form, setForm, onSave, onCancel, saving }) {
-  function set(key, value) {
-    setForm((f) => ({ ...f, [key]: value }));
+// ─── ImportModal (교육청 엑셀 가져오기) ──────────────────────────────────────────
+
+const CUR_YEAR = new Date().getFullYear();
+const YEAR_OPTS = [CUR_YEAR - 2, CUR_YEAR - 1, CUR_YEAR];
+
+function ImportModal({ schoolId, onClose, onDone }) {
+  const fileRef = useRef(null);
+  const [file, setFile] = useState(null);
+  const [entryYear, setEntryYear] = useState(CUR_YEAR - 1);
+  const [targetGrade, setTargetGrade] = useState(() => calcCurrentGrade(CUR_YEAR - 1));
+  const [parsed, setParsed] = useState(null);
+  const [step, setStep] = useState("select"); // select | preview | saving
+  const [err, setErr] = useState("");
+
+  function handleFileChange(e) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setFile(f);
+    setParsed(null);
+    setStep("select");
+    setErr("");
+    const detected = extractEntryYear(f.name);
+    if (detected && YEAR_OPTS.includes(detected)) {
+      setEntryYear(detected);
+      setTargetGrade(calcCurrentGrade(detected));
+    }
+    e.target.value = "";
   }
 
+  function handleYearChange(y) {
+    setEntryYear(y);
+    setTargetGrade(calcCurrentGrade(y));
+    setParsed(null);
+    setStep("select");
+  }
+
+  function handleGradeChange(val) {
+    setTargetGrade(val === "all" ? null : Number(val));
+    setParsed(null);
+    setStep("select");
+  }
+
+  function handleParse() {
+    if (!file) return;
+    setErr("");
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const result = parseEducationExcel(ev.target.result, targetGrade);
+        if (!result.courses.length) {
+          setErr("파싱된 과목이 없습니다. 파일 형식 및 학년 선택을 확인하세요.");
+          return;
+        }
+        setParsed(result);
+        setStep("preview");
+      } catch (e) {
+        setErr("파싱 오류: " + e.message);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  async function handleSave() {
+    if (!parsed?.courses?.length) return;
+    setStep("saving");
+    try {
+      const withYear = parsed.courses.map(c => ({ ...c, entryYear }));
+      await bulkSaveSubjectsByYear(schoolId, withYear, entryYear);
+      onDone(parsed.courses.length, entryYear);
+    } catch (e) {
+      setErr("저장 실패: " + e.message);
+      setStep("preview");
+    }
+  }
+
+  const currentGrade = calcCurrentGrade(entryYear);
+  const gradeSelectVal = targetGrade != null ? String(targetGrade) : "all";
+
   return (
-    <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-sky-200 bg-sky-50 px-4 py-3 my-2">
-      {/* 과목명 */}
-      <div className="flex flex-col gap-1">
-        <label className="text-xs font-semibold text-slate-500">과목명</label>
-        <input
-          type="text"
-          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 w-40"
-          placeholder="예: 국어"
-          value={form.name}
-          onChange={(e) => set("name", e.target.value)}
-        />
+    <div style={s.backdrop} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={s.modal}>
+        <p style={s.modalTitle}>교육과정 엑셀 가져오기</p>
+        <p style={{ fontSize: "0.82rem", color: "#6b7280", marginBottom: "1rem" }}>
+          교육청 제출용 교육과정 학점 배당표(.xlsx)를 업로드하면 과목이 자동 등록됩니다.
+          2022 개정 / 2015 개정 형식 모두 지원합니다.
+        </p>
+
+        {err && (
+          <div style={{ ...s.notice, ...s.noticeErr }}>
+            <span>{err}</span>
+            <button onClick={() => setErr("")} style={{ background: "none", border: "none", cursor: "pointer", fontWeight: 700 }}>✕</button>
+          </div>
+        )}
+
+        {/* 파일 선택 */}
+        <div style={s.fgroup}>
+          <label style={s.label}>파일 선택 (.xlsx)</label>
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+            <button type="button" style={s.outlineBtn} onClick={() => fileRef.current?.click()}>
+              파일 선택
+            </button>
+            <input ref={fileRef} type="file" accept=".xlsx" style={{ display: "none" }} onChange={handleFileChange} />
+            <span style={{ fontSize: "0.82rem", color: file ? "#111827" : "#9ca3af", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "220px" }}>
+              {file ? file.name : "xlsx 파일을 선택하세요"}
+            </span>
+          </div>
+        </div>
+
+        {/* 입학년도 + 불러올 학년 */}
+        <div style={s.grid2}>
+          <div>
+            <label style={s.label}>입학년도 (신입생 기준)</label>
+            <select style={s.mSelect} value={entryYear} onChange={e => handleYearChange(Number(e.target.value))}>
+              {YEAR_OPTS.map(y => <option key={y} value={y}>{y}년</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={s.label}>불러올 학년</label>
+            <select style={s.mSelect} value={gradeSelectVal} onChange={e => handleGradeChange(e.target.value)}>
+              {currentGrade != null && (
+                <option value={String(currentGrade)}>현재 {currentGrade}학년만 (권장)</option>
+              )}
+              <option value="all">전체 (1·2·3학년)</option>
+              {[1, 2, 3].filter(g => g !== currentGrade).map(g => (
+                <option key={g} value={String(g)}>{g}학년만</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* 학년 안내 */}
+        {currentGrade != null ? (
+          <div style={{ fontSize: "0.8rem", color: "#4f46e5", backgroundColor: "#eef2ff", padding: "0.4rem 0.75rem", borderRadius: "6px", marginBottom: "1rem" }}>
+            {entryYear}년 신입생 → {CUR_YEAR}년 현재 <strong>{currentGrade}학년</strong>
+          </div>
+        ) : (
+          <div style={{ fontSize: "0.8rem", color: "#dc2626", backgroundColor: "#fef2f2", padding: "0.4rem 0.75rem", borderRadius: "6px", marginBottom: "1rem" }}>
+            해당 입학년도 학생은 현재 재학 중이 아닙니다. (졸업 또는 미입학)
+          </div>
+        )}
+
+        {/* Step: select */}
+        {step === "select" && (
+          <button type="button" style={{ ...s.primaryBtn, width: "100%" }}
+            disabled={!file} onClick={handleParse}>
+            분석하기
+          </button>
+        )}
+
+        {/* Step: preview */}
+        {step === "preview" && parsed && (
+          <>
+            <div style={{ backgroundColor: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
+              <p style={{ fontWeight: 700, fontSize: "0.9rem", color: "#111827", marginBottom: "0.5rem" }}>
+                분석 완료: 총 {parsed.courses.length}개 과목
+              </p>
+              <div style={{ display: "flex", gap: "1rem" }}>
+                {[1, 2, 3].map(g => {
+                  const cnt = parsed.courses.filter(c => c.grade === g).length;
+                  return cnt > 0 ? (
+                    <span key={g} style={{ fontSize: "0.82rem", color: "#6b7280" }}>{g}학년 {cnt}개</span>
+                  ) : null;
+                })}
+                {["학교지정", "학생선택"].map(cat => {
+                  const cnt = parsed.courses.filter(c => c.category === cat).length;
+                  return cnt > 0 ? (
+                    <span key={cat} style={{ fontSize: "0.82rem", color: "#6b7280" }}>{cat} {cnt}개</span>
+                  ) : null;
+                })}
+              </div>
+              {parsed.errors.length > 0 && (
+                <div style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #e5e7eb" }}>
+                  {parsed.errors.slice(0, 5).map((e, i) => (
+                    <p key={i} style={{ fontSize: "0.78rem", color: "#dc2626", margin: 0 }}>• {e}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+            <p style={{ fontSize: "0.8rem", color: "#6b7280", marginBottom: "0.75rem" }}>
+              기존 <strong>{entryYear}년</strong> 입학 과목 데이터는 삭제되고 새 데이터로 교체됩니다.
+            </p>
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <button type="button" style={{ ...s.outlineBtn, flex: 1 }}
+                onClick={() => { setStep("select"); setParsed(null); }}>
+                다시 선택
+              </button>
+              <button type="button" style={{ ...s.primaryBtn, flex: 1 }}
+                onClick={handleSave}>
+                저장 ({parsed.courses.length}개)
+              </button>
+            </div>
+          </>
+        )}
+
+        {step === "saving" && (
+          <p style={{ textAlign: "center", padding: "1.5rem", color: "#6b7280" }}>저장 중…</p>
+        )}
+
+        <div style={{ marginTop: "0.75rem" }}>
+          <button type="button" style={{ ...s.outlineBtn, width: "100%" }} onClick={onClose}>
+            {step === "saving" ? "대기 중…" : "닫기"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── 메인 컴포넌트 ────────────────────────────────────────────────────────────
+
+const GRADE_TABS = [
+  { key: "all", label: "전체" },
+  { key: 1, label: "1학년" },
+  { key: 2, label: "2학년" },
+  { key: 3, label: "3학년" },
+];
+
+export default function SubjectsTab({ schoolId }) {
+  const [subjects, setSubjects] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [gradeFilter, setGradeFilter] = useState("all");
+  const [catFilter, setCatFilter] = useState("전체");
+  const [sgFilter, setSgFilter] = useState("전체");
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState(null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [notice, setNotice] = useState(null);
+
+  useEffect(() => { if (schoolId) fetchSubjects(); }, [schoolId]);
+
+  async function fetchSubjects() {
+    setLoading(true);
+    try {
+      const data = await loadSubjects(schoolId);
+      setSubjects(sortSubjects(data));
+    } catch (err) {
+      setNotice({ type: "err", msg: "목록 로드 실패: " + err.message });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSaveSubject(data) {
+    await saveSubject(schoolId, data);
+    await fetchSubjects();
+  }
+
+  async function handleDelete(subject) {
+    if (!window.confirm(`"${subject.name}" 과목을 삭제하시겠습니까?`)) return;
+    try {
+      await deleteSubject(schoolId, subject.id);
+      setSubjects(prev => prev.filter(s => s.id !== subject.id));
+    } catch (err) {
+      setNotice({ type: "err", msg: "삭제 실패: " + err.message });
+    }
+  }
+
+  async function handleDeleteAll() {
+    if (!subjects.length) return;
+    if (!window.confirm(`전체 과목 ${subjects.length}개를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) return;
+    setLoading(true);
+    try {
+      await deleteSubjectsByYear(schoolId, null);
+      setSubjects([]);
+      setNotice({ type: "ok", msg: "전체 과목이 삭제되었습니다." });
+    } catch (err) {
+      setNotice({ type: "err", msg: "삭제 실패: " + err.message });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // 필터 목록
+  const allSg = ["전체", ...new Set(subjects.map(s => s.subjectGroup).filter(Boolean))];
+  const filtered = subjects.filter(s => {
+    if (gradeFilter !== "all" && s.grade !== gradeFilter) return false;
+    if (catFilter !== "전체" && s.category !== catFilter) return false;
+    if (sgFilter !== "전체" && s.subjectGroup !== sgFilter) return false;
+    return true;
+  });
+  const countByGrade = {
+    all: subjects.length,
+    1: subjects.filter(s => s.grade === 1).length,
+    2: subjects.filter(s => s.grade === 2).length,
+    3: subjects.filter(s => s.grade === 3).length,
+  };
+
+  // 등록된 입학년도 목록 (표시용)
+  const entryYears = [...new Set(subjects.map(s => s.entryYear).filter(Boolean))].sort();
+
+  return (
+    <div style={s.page}>
+      {/* 페이지 헤더 */}
+      <div style={s.pageHeader}>
+        <div>
+          <p style={s.eyebrow}>기초 데이터</p>
+          <h2 style={s.pageTitle}>과목 기초 데이터</h2>
+          {entryYears.length > 0 && (
+            <p style={{ fontSize: "0.78rem", color: "#9ca3af", margin: "0.2rem 0 0" }}>
+              등록 입학년도: {entryYears.map(y => `${y}년 (${y}학번)`).join(", ")}
+            </p>
+          )}
+        </div>
+        <div style={s.btnRow}>
+          {subjects.length > 0 && (
+            <button style={s.dangerBtn} onClick={handleDeleteAll} disabled={loading}>
+              전체 삭제
+            </button>
+          )}
+          <button style={s.outlineBtn} onClick={() => setImportOpen(true)}>
+            엑셀 가져오기
+          </button>
+          <button style={s.primaryBtn} onClick={() => { setEditTarget(null); setModalOpen(true); }}>
+            + 과목 추가
+          </button>
+        </div>
       </div>
 
-      {/* 학년 */}
-      <div className="flex flex-col gap-1">
-        <label className="text-xs font-semibold text-slate-500">학년</label>
-        <select
-          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400"
-          value={form.grade}
-          onChange={(e) => set("grade", e.target.value)}
-        >
-          <option value="1">1학년</option>
-          <option value="2">2학년</option>
-          <option value="3">3학년</option>
+      {/* 알림 */}
+      {notice && (
+        <div style={{ ...s.notice, ...(notice.type === "ok" ? s.noticeOk : s.noticeErr) }}>
+          <span>{notice.msg}</span>
+          <button onClick={() => setNotice(null)} style={{ background: "none", border: "none", cursor: "pointer", fontWeight: 700 }}>✕</button>
+        </div>
+      )}
+
+      {/* 필터 */}
+      <div style={s.filterRow}>
+        {GRADE_TABS.map(tab => (
+          <button key={tab.key} style={gradeFilter === tab.key ? s.tabActive : s.tab}
+            onClick={() => setGradeFilter(tab.key)}>
+            {tab.label}
+            <span style={gradeFilter === tab.key ? s.badgeActive : s.badge}>
+              {countByGrade[tab.key]}
+            </span>
+          </button>
+        ))}
+        <div style={s.divider} />
+        {["전체", "학교지정", "학생선택"].map(cat => (
+          <button key={cat} style={catFilter === cat ? s.tabActive : s.tab}
+            onClick={() => setCatFilter(cat)}>
+            {cat}
+          </button>
+        ))}
+        <div style={s.divider} />
+        <select style={s.filterSelect} value={sgFilter} onChange={e => setSgFilter(e.target.value)}>
+          {allSg.map(sg => <option key={sg}>{sg}</option>)}
         </select>
       </div>
 
-      {/* 구분 */}
-      <div className="flex flex-col gap-1">
-        <label className="text-xs font-semibold text-slate-500">구분</label>
-        <select
-          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400"
-          value={form.type}
-          onChange={(e) => set("type", e.target.value)}
-        >
-          <option value="common">공통과목</option>
-          <option value="elective">선택과목</option>
-        </select>
-      </div>
+      {/* 테이블 */}
+      <table style={s.table}>
+        <thead style={s.thead}>
+          <tr>
+            <th style={s.th}>구분</th>
+            <th style={s.th}>교과군</th>
+            <th style={s.th}>과목구분</th>
+            <th style={s.th}>과목명</th>
+            <th style={s.th}>학점</th>
+            <th style={s.th}>개설정보</th>
+            <th style={s.th}>입학년도</th>
+            <th style={s.thRight}>
+              {filtered.length > 0 && (
+                <span style={{ fontSize: "0.78rem", color: "#9ca3af", fontWeight: 400 }}>
+                  {filtered.length}개
+                </span>
+              )}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {loading ? (
+            <tr><td colSpan={8} style={s.emptyRow}>불러오는 중…</td></tr>
+          ) : filtered.length === 0 ? (
+            <tr><td colSpan={8} style={s.emptyRow}>
+              {subjects.length === 0
+                ? "등록된 과목이 없습니다. 엑셀 가져오기 또는 과목 추가를 이용하세요."
+                : "조건에 맞는 과목이 없습니다."}
+            </td></tr>
+          ) : filtered.map(subject => (
+            <tr key={subject.id} style={s.tr}
+              onMouseEnter={e => e.currentTarget.style.backgroundColor = "#f9fafb"}
+              onMouseLeave={e => e.currentTarget.style.backgroundColor = ""}>
+              <td style={s.td}>
+                <span style={subject.category === "학교지정" ? s.badgeSpec : s.badgeSel}>
+                  {subject.category === "학교지정" ? "지정" : "선택"}
+                </span>
+              </td>
+              <td style={s.tdMuted}>{subject.subjectGroup || "—"}</td>
+              <td style={{ ...s.tdMuted, fontSize: "0.78rem" }}>{subject.courseType || "—"}</td>
+              <td style={{ ...s.td, fontWeight: 600 }}>{subject.name}</td>
+              <td style={s.tdMuted}>{subject.credits || "—"}</td>
+              <td style={s.tdMuted}>{scheduleLabel(subject)}</td>
+              <td style={s.tdMuted}>{subject.entryYear || "—"}</td>
+              <td style={s.tdRight}>
+                <button style={s.editBtn} onClick={() => { setEditTarget(subject); setModalOpen(true); }}>수정</button>
+                <button style={s.deleteBtn} onClick={() => handleDelete(subject)}>삭제</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
-      {/* 서술형 */}
-      <div className="flex flex-col gap-1">
-        <label className="text-xs font-semibold text-slate-500">서술형 포함</label>
-        <label className="flex items-center gap-2 h-8 cursor-pointer">
-          <input
-            type="checkbox"
-            className="w-4 h-4 accent-sky-500"
-            checked={form.isEssay}
-            onChange={(e) => set("isEssay", e.target.checked)}
-          />
-          <span className="text-sm text-slate-600">{form.isEssay ? "포함" : "미포함"}</span>
-        </label>
-      </div>
-
-      {/* 시험시간 */}
-      <div className="flex flex-col gap-1">
-        <label className="text-xs font-semibold text-slate-500">시험시간 (분)</label>
-        <input
-          type="number"
-          min={1}
-          className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400 w-24"
-          placeholder="45"
-          value={form.duration}
-          onChange={(e) => set("duration", e.target.value)}
+      {/* 과목 추가/수정 모달 */}
+      {modalOpen && (
+        <SubjectModal
+          subject={editTarget}
+          onClose={() => { setModalOpen(false); setEditTarget(null); }}
+          onSave={handleSaveSubject}
         />
-      </div>
+      )}
 
-      {/* 버튼 */}
-      <div className="flex gap-2">
-        <button
-          type="button"
-          className="primary-button"
-          onClick={onSave}
-          disabled={saving}
-        >
-          {saving ? "저장 중..." : "저장"}
-        </button>
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={onCancel}
-          disabled={saving}
-        >
-          취소
-        </button>
-      </div>
+      {/* 엑셀 가져오기 모달 */}
+      {importOpen && (
+        <ImportModal
+          schoolId={schoolId}
+          onClose={() => setImportOpen(false)}
+          onDone={(count, year) => {
+            setImportOpen(false);
+            setNotice({ type: "ok", msg: `${year}년 입학 과목 ${count}개 저장 완료` });
+            fetchSubjects();
+          }}
+        />
+      )}
     </div>
   );
 }

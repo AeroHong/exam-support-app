@@ -55,20 +55,18 @@ export async function deleteStudent(schoolId, studentId) {
 }
 
 /**
- * Replace the entire student roster with the provided list.
- * Uses writeBatch in chunks of 500 to respect Firestore limits.
- * @param {string} schoolId
- * @param {Array} students  Each item may have an optional `id` field.
- * @returns {Promise<void>}
+ * 업로드된 학년만 교체. 다른 학년 데이터는 유지.
+ * (예: 2학년 파일 업로드 시 2학년만 삭제 후 저장, 1·3학년은 그대로)
  */
 export async function bulkSaveStudents(schoolId, students) {
-  // 1. Delete all existing students
+  const uploadedGrades = [...new Set(students.map((s) => s.grade))];
   const existing = await loadStudents(schoolId);
+  const toDelete = existing.filter((s) => uploadedGrades.includes(s.grade));
   const CHUNK = 500;
 
-  for (let i = 0; i < existing.length; i += CHUNK) {
+  for (let i = 0; i < toDelete.length; i += CHUNK) {
     const batch = writeBatch(firebaseDb);
-    existing.slice(i, i + CHUNK).forEach((s) => {
+    toDelete.slice(i, i + CHUNK).forEach((s) => {
       batch.delete(doc(firebaseDb, "schools", schoolId, "students", s.id));
     });
     await batch.commit();
@@ -86,6 +84,23 @@ export async function bulkSaveStudents(schoolId, students) {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
+    });
+    await batch.commit();
+  }
+}
+
+/**
+ * 특정 학년(또는 전체) 학생 삭제
+ * grade 미지정 시 전체 삭제
+ */
+export async function deleteStudentsByGrade(schoolId, grade) {
+  const existing = await loadStudents(schoolId);
+  const targets = grade ? existing.filter((s) => s.grade === grade) : existing;
+  const CHUNK = 500;
+  for (let i = 0; i < targets.length; i += CHUNK) {
+    const batch = writeBatch(firebaseDb);
+    targets.slice(i, i + CHUNK).forEach((s) => {
+      batch.delete(doc(firebaseDb, "schools", schoolId, "students", s.id));
     });
     await batch.commit();
   }
@@ -173,4 +188,53 @@ export async function saveSubject(schoolId, subject) {
  */
 export async function deleteSubject(schoolId, subjectId) {
   await deleteDoc(doc(firebaseDb, "schools", schoolId, "subjects", subjectId));
+}
+
+/**
+ * 특정 입학년도 과목 전체 교체 (기존 동일 entryYear 삭제 후 새로 저장)
+ * @param {string} schoolId
+ * @param {Array} subjects  — 각 항목에 entryYear 포함
+ * @param {number} entryYear
+ */
+export async function bulkSaveSubjectsByYear(schoolId, subjects, entryYear) {
+  const existing = await loadSubjects(schoolId);
+  const toDelete = existing.filter((s) => s.entryYear === entryYear);
+  const CHUNK = 500;
+
+  for (let i = 0; i < toDelete.length; i += CHUNK) {
+    const batch = writeBatch(firebaseDb);
+    toDelete.slice(i, i + CHUNK).forEach((s) => {
+      batch.delete(doc(firebaseDb, "schools", schoolId, "subjects", s.id));
+    });
+    await batch.commit();
+  }
+
+  const colRef = collection(firebaseDb, "schools", schoolId, "subjects");
+  for (let i = 0; i < subjects.length; i += CHUNK) {
+    const batch = writeBatch(firebaseDb);
+    subjects.slice(i, i + CHUNK).forEach((subject) => {
+      const { id, ...data } = subject;
+      const ref = doc(colRef);
+      batch.set(ref, { ...data, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+    });
+    await batch.commit();
+  }
+}
+
+/**
+ * 입학년도별 과목 삭제 (entryYear=null 이면 전체)
+ * @param {string} schoolId
+ * @param {number|null} entryYear
+ */
+export async function deleteSubjectsByYear(schoolId, entryYear) {
+  const existing = await loadSubjects(schoolId);
+  const targets = entryYear != null ? existing.filter((s) => s.entryYear === entryYear) : existing;
+  const CHUNK = 500;
+  for (let i = 0; i < targets.length; i += CHUNK) {
+    const batch = writeBatch(firebaseDb);
+    targets.slice(i, i + CHUNK).forEach((s) => {
+      batch.delete(doc(firebaseDb, "schools", schoolId, "subjects", s.id));
+    });
+    await batch.commit();
+  }
 }
