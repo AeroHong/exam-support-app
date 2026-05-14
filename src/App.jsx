@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import DashboardPanel from "./components/DashboardPanel";
+import DataManagementPage from "./components/DataManagementPage";
 import ExamInputPage from "./components/ExamInputPage";
 import LoginScreen from "./components/LoginScreen";
 import RoomAssignmentPage from "./components/RoomAssignmentPage";
@@ -12,6 +13,7 @@ import { useScheduleEngine } from "./hooks/useScheduleEngine";
 import { useTenantData } from "./hooks/useTenantData";
 
 const workflowPages = [
+  { key: "data", label: "기초 데이터" },
   { key: "overview", label: "개요" },
   { key: "input", label: "시험 입력" },
   { key: "rooms", label: "고사실 배정" },
@@ -20,7 +22,7 @@ const workflowPages = [
 
 function App() {
   const auth = useAuth();
-  const [activePage, setActivePage] = useState("overview");
+  const [activePage, setActivePage] = useState("data");
   const [selectedMetric, setSelectedMetric] = useState(null);
   const [draftStudents, setDraftStudents] = useState([]);
   const [draftEnrollments, setDraftEnrollments] = useState([]);
@@ -163,6 +165,10 @@ function App() {
         {tenantData.error ? <p className="top-message error">{tenantData.error}</p> : null}
         {planner.error ? <p className="top-message error">{planner.error}</p> : null}
         {planner.saveError ? <p className="top-message error">{planner.saveError}</p> : null}
+
+        {activePage === "data" ? (
+          <DataManagementPage schoolId={auth.profile?.schoolId} onLogout={auth.logout} />
+        ) : null}
 
         {activePage === "overview" ? (
           <DashboardPanel
