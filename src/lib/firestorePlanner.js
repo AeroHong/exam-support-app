@@ -16,35 +16,35 @@ function mapDocs(snapshot) {
   }));
 }
 
-export async function loadTenantData(tenantId) {
-  if (!firebaseDb || !tenantId) {
+export async function loadTenantData(schoolId) {
+  if (!firebaseDb || !schoolId) {
     return null;
   }
 
-  const tenantRef = doc(firebaseDb, "tenants", tenantId);
-  const [tenantSnap, studentsSnap, enrollmentsSnap, roomsSnap] = await Promise.all([
-    getDoc(tenantRef),
-    getDocs(collection(firebaseDb, "tenants", tenantId, "students")),
-    getDocs(collection(firebaseDb, "tenants", tenantId, "enrollments")),
-    getDocs(collection(firebaseDb, "tenants", tenantId, "rooms")),
+  const schoolRef = doc(firebaseDb, "schools", schoolId);
+  const [schoolSnap, studentsSnap, enrollmentsSnap, roomsSnap] = await Promise.all([
+    getDoc(schoolRef),
+    getDocs(collection(firebaseDb, "schools", schoolId, "students")),
+    getDocs(collection(firebaseDb, "schools", schoolId, "enrollments")),
+    getDocs(collection(firebaseDb, "schools", schoolId, "rooms")),
   ]);
 
   return {
-    tenant: tenantSnap.exists()
-      ? { id: tenantSnap.id, ...tenantSnap.data() }
-      : { id: tenantId, name: tenantId, domain: "" },
+    school: schoolSnap.exists()
+      ? { id: schoolSnap.id, ...schoolSnap.data() }
+      : { id: schoolId, name: schoolId, domain: "" },
     students: mapDocs(studentsSnap),
     enrollments: mapDocs(enrollmentsSnap),
     rooms: mapDocs(roomsSnap),
   };
 }
 
-export async function loadLatestPlan({ tenantId, ownerId }) {
-  if (!firebaseDb || !tenantId || !ownerId) {
+export async function loadLatestPlan({ schoolId, ownerId }) {
+  if (!firebaseDb || !schoolId || !ownerId) {
     return null;
   }
 
-  const plansSnap = await getDocs(collection(firebaseDb, "tenants", tenantId, "plans"));
+  const plansSnap = await getDocs(collection(firebaseDb, "schools", schoolId, "plans"));
   const plans = mapDocs(plansSnap);
   const sortedPlans = plans.sort((left, right) => {
     const leftTime = left.updatedAt?.seconds ?? 0;
@@ -58,7 +58,7 @@ export async function loadLatestPlan({ tenantId, ownerId }) {
   }
 
   const sessionsSnap = await getDocs(
-    collection(firebaseDb, "tenants", tenantId, "plans", ownedPlan.id, "sessions"),
+    collection(firebaseDb, "schools", schoolId, "plans", ownedPlan.id, "sessions"),
   );
 
   return {
@@ -67,17 +67,17 @@ export async function loadLatestPlan({ tenantId, ownerId }) {
   };
 }
 
-export async function savePlan({ tenantId, ownerId, plan }) {
-  if (!firebaseDb || !tenantId || !ownerId || !plan) {
+export async function savePlan({ schoolId, ownerId, plan }) {
+  if (!firebaseDb || !schoolId || !ownerId || !plan) {
     throw new Error("저장에 필요한 Firebase 정보가 부족합니다.");
   }
 
   const planId = plan.id;
-  const planRef = doc(firebaseDb, "tenants", tenantId, "plans", planId);
+  const planRef = doc(firebaseDb, "schools", schoolId, "plans", planId);
   const sessionsCollectionRef = collection(
     firebaseDb,
-    "tenants",
-    tenantId,
+    "schools",
+    schoolId,
     "plans",
     planId,
     "sessions",
@@ -89,7 +89,7 @@ export async function savePlan({ tenantId, ownerId, plan }) {
     planRef,
     {
       ownerId,
-      tenantId,
+      schoolId,
       name: plan.name,
       days: plan.days,
       activeFilter: plan.activeFilter,

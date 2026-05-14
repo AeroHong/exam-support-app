@@ -1,4 +1,4 @@
-export const seedTenant = {
+export const seedSchool = {
   id: "",
   name: "",
   domain: "",
@@ -12,7 +12,7 @@ export const seedRooms = [];
 
 export const seedPlan = {
   id: "",
-  tenantId: "",
+  schoolId: "",
   name: "",
   activeFilter: "all",
   days: [],

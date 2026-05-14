@@ -1,7 +1,7 @@
-export function getDefaultTenantData(tenantId) {
+export function getDefaultTenantData(schoolId) {
   return {
-    tenant: {
-      id: tenantId ?? "",
+    school: {
+      id: schoolId ?? "",
       name: "",
       domain: "",
     },
@@ -11,10 +11,10 @@ export function getDefaultTenantData(tenantId) {
   };
 }
 
-export function getDefaultPlan(tenantId) {
+export function getDefaultPlan(schoolId) {
   return {
     id: "",
-    tenantId: tenantId ?? "",
+    schoolId: schoolId ?? "",
     name: "",
     activeFilter: "all",
     days: [],

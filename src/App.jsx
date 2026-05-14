@@ -5,6 +5,7 @@ import LoginScreen from "./components/LoginScreen";
 import RoomAssignmentPage from "./components/RoomAssignmentPage";
 import ScheduleBoardPage from "./components/ScheduleBoardPage";
 import StudentListModal from "./components/StudentListModal";
+import SuperAdminPage from "./components/SuperAdminPage";
 import { useAuth } from "./hooks/useAuth";
 import { usePlannerData } from "./hooks/usePlannerData";
 import { useScheduleEngine } from "./hooks/useScheduleEngine";
@@ -25,11 +26,11 @@ function App() {
   const [draftEnrollments, setDraftEnrollments] = useState([]);
 
   const tenantData = useTenantData({
-    tenantId: auth.profile?.tenantId,
+    schoolId: auth.profile?.schoolId,
     enabled: auth.status === "signed_in",
   });
   const planner = usePlannerData({
-    tenantId: auth.profile?.tenantId,
+    schoolId: auth.profile?.schoolId,
     ownerId: auth.user?.uid,
     enabled: auth.status === "signed_in",
   });
@@ -99,11 +100,16 @@ function App() {
   if (auth.status !== "signed_in") {
     return (
       <LoginScreen
+        status={auth.status}
         error={auth.error}
-        isLoading={auth.status === "loading"}
         onSignIn={auth.signIn}
+        onSubmitSchoolName={auth.submitSchoolName}
       />
     );
+  }
+
+  if (auth.profile?.role === "super_admin") {
+    return <SuperAdminPage onLogout={auth.logout} />;
   }
 
   return (
@@ -112,7 +118,7 @@ function App() {
         <header className="topbar">
           <div className="topbar-title">
             <p className="eyebrow">시험 운영 지원 플랫폼</p>
-            <h1>{tenantData.tenant.name ?? auth.profile?.tenantId}</h1>
+            <h1>{tenantData.school.name ?? auth.profile?.schoolId}</h1>
           </div>
 
           <div className="topbar-meta">

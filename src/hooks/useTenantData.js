@@ -2,21 +2,21 @@ import { useEffect, useState } from "react";
 import { getDefaultTenantData } from "../data/defaults";
 import { loadTenantData } from "../lib/firestorePlanner";
 
-export function useTenantData({ tenantId, enabled }) {
+export function useTenantData({ schoolId, enabled }) {
   const [state, setState] = useState({
     status: enabled ? "loading" : "idle",
     source: "seed",
     error: null,
-    ...getDefaultTenantData(tenantId),
+    ...getDefaultTenantData(schoolId),
   });
 
   useEffect(() => {
-    if (!enabled || !tenantId) {
+    if (!enabled || !schoolId) {
       setState({
         status: "idle",
         source: "seed",
         error: null,
-        ...getDefaultTenantData(tenantId),
+        ...getDefaultTenantData(schoolId),
       });
       return;
     }
@@ -31,7 +31,7 @@ export function useTenantData({ tenantId, enabled }) {
       }));
 
       try {
-        const remote = await loadTenantData(tenantId);
+        const remote = await loadTenantData(schoolId);
         if (cancelled) {
           return;
         }
@@ -45,7 +45,7 @@ export function useTenantData({ tenantId, enabled }) {
           status: "ready",
           source: hasRemoteData ? "firestore" : "seed",
           error: null,
-          ...(hasRemoteData ? remote : getDefaultTenantData(tenantId)),
+          ...(hasRemoteData ? remote : getDefaultTenantData(schoolId)),
         });
       } catch (error) {
         if (cancelled) {
@@ -55,8 +55,8 @@ export function useTenantData({ tenantId, enabled }) {
         setState({
           status: "ready",
           source: "seed",
-          error: error instanceof Error ? error.message : "테넌트 데이터를 불러오지 못했습니다.",
-          ...getDefaultTenantData(tenantId),
+          error: error instanceof Error ? error.message : "학교 데이터를 불러오지 못했습니다.",
+          ...getDefaultTenantData(schoolId),
         });
       }
     }
@@ -66,7 +66,7 @@ export function useTenantData({ tenantId, enabled }) {
     return () => {
       cancelled = true;
     };
-  }, [enabled, tenantId]);
+  }, [enabled, schoolId]);
 
   return state;
 }

@@ -2,10 +2,10 @@ import { useEffect, useState } from "react";
 import { getDefaultPlan } from "../data/defaults";
 import { loadLatestPlan, savePlan } from "../lib/firestorePlanner";
 
-export function usePlannerData({ tenantId, ownerId, enabled }) {
+export function usePlannerData({ schoolId, ownerId, enabled }) {
   const [state, setState] = useState({
     status: enabled ? "loading" : "idle",
-    plan: getDefaultPlan(tenantId),
+    plan: getDefaultPlan(schoolId),
     error: null,
     source: "seed",
     saveStatus: "idle",
@@ -13,11 +13,11 @@ export function usePlannerData({ tenantId, ownerId, enabled }) {
   });
 
   useEffect(() => {
-    if (!enabled || !tenantId || !ownerId) {
+    if (!enabled || !schoolId || !ownerId) {
       setState((current) => ({
         ...current,
         status: "idle",
-        plan: getDefaultPlan(tenantId),
+        plan: getDefaultPlan(schoolId),
       }));
       return;
     }
@@ -32,7 +32,7 @@ export function usePlannerData({ tenantId, ownerId, enabled }) {
       }));
 
       try {
-        const remotePlan = await loadLatestPlan({ tenantId, ownerId });
+        const remotePlan = await loadLatestPlan({ schoolId, ownerId });
         if (cancelled) {
           return;
         }
@@ -40,7 +40,7 @@ export function usePlannerData({ tenantId, ownerId, enabled }) {
         setState((current) => ({
           ...current,
           status: "ready",
-          plan: remotePlan ?? getDefaultPlan(tenantId),
+          plan: remotePlan ?? getDefaultPlan(schoolId),
           source: remotePlan ? "firestore" : "seed",
           error: null,
         }));
@@ -52,7 +52,7 @@ export function usePlannerData({ tenantId, ownerId, enabled }) {
         setState((current) => ({
           ...current,
           status: "ready",
-          plan: getDefaultPlan(tenantId),
+          plan: getDefaultPlan(schoolId),
           source: "seed",
           error: error instanceof Error ? error.message : "작업본을 불러오지 못했습니다.",
         }));
@@ -64,7 +64,7 @@ export function usePlannerData({ tenantId, ownerId, enabled }) {
     return () => {
       cancelled = true;
     };
-  }, [enabled, ownerId, tenantId]);
+  }, [enabled, ownerId, schoolId]);
 
   const replacePlan = (nextPlan) => {
     setState((current) => ({
@@ -81,7 +81,7 @@ export function usePlannerData({ tenantId, ownerId, enabled }) {
     }));
 
     try {
-      await savePlan({ tenantId, ownerId, plan });
+      await savePlan({ schoolId, ownerId, plan });
       setState((current) => ({
         ...current,
         saveStatus: "saved",
@@ -98,7 +98,7 @@ export function usePlannerData({ tenantId, ownerId, enabled }) {
   };
 
   const reload = async () => {
-    if (!enabled || !tenantId || !ownerId) {
+    if (!enabled || !schoolId || !ownerId) {
       return;
     }
 
@@ -109,11 +109,11 @@ export function usePlannerData({ tenantId, ownerId, enabled }) {
     }));
 
     try {
-      const remotePlan = await loadLatestPlan({ tenantId, ownerId });
+      const remotePlan = await loadLatestPlan({ schoolId, ownerId });
       setState((current) => ({
         ...current,
         status: "ready",
-        plan: remotePlan ?? getDefaultPlan(tenantId),
+        plan: remotePlan ?? getDefaultPlan(schoolId),
         source: remotePlan ? "firestore" : "seed",
         error: null,
       }));

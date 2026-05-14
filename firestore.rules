@@ -1,9 +1,54 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Temporary test mode. Tighten before production use.
-    match /{document=**} {
-      allow read, write: if request.time < timestamp.date(2026, 5, 1);
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && request.auth.token.email == 'hckgood@gmail.com';
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function mySchoolId() {
+      return userDoc().schoolId;
+    }
+
+    // 도메인 → 학교 매핑: 로그인 사용자 읽기, super_admin 쓰기
+    match /schoolDomains/{domain} {
+      allow read: if isSignedIn();
+      allow write: if isSuperAdmin();
+    }
+
+    // 개인 이메일 → 학교 매핑: 로그인 사용자 읽기, super_admin 쓰기
+    match /userEmailMap/{emailKey} {
+      allow read: if isSignedIn();
+      allow write: if isSuperAdmin();
+    }
+
+    // 사용자 프로필: 본인 또는 super_admin
+    match /users/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isSuperAdmin());
+      allow create: if isSignedIn() && request.auth.uid == uid;
+      allow update: if isSignedIn() && (request.auth.uid == uid || isSuperAdmin());
+    }
+
+    // 학교 데이터: super_admin 전체 접근, 일반 사용자는 본인 학교만
+    match /schools/{schoolId} {
+      allow read: if isSuperAdmin() || (isSignedIn() && mySchoolId() == schoolId);
+      allow create: if isSuperAdmin() ||
+        (isSignedIn() &&
+         schoolId.matches('guest_.*') &&
+         request.resource.data.ownerUid == request.auth.uid);
+      allow update, delete: if isSuperAdmin() || (isSignedIn() && mySchoolId() == schoolId);
+
+      match /{subcollection=**} {
+        allow read, write: if isSuperAdmin() || (isSignedIn() && mySchoolId() == schoolId);
+      }
     }
   }
 }
