@@ -31,5 +31,5 @@ Thumbs.db
 *.xlsx
 *.xls
 
-# 내부 문서
-docs/
+# 내부 문서 (개인정보 포함 PDF 제외, MD는 추적)
+docs/*.pdf
