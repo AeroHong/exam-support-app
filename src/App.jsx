@@ -198,7 +198,7 @@ function App() {
       {/* ── 페이지 콘텐츠 ── */}
       <main>
         {activePage === "data" ? (
-          <DataManagementPage schoolId={auth.profile?.schoolId} />
+          <DataManagementPage schoolId={auth.profile?.schoolId} students={effectiveStudents} />
         ) : null}
 
         {activePage === "examplan" ? (

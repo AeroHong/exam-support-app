@@ -1,4 +1,5 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import * as XLSX from "xlsx";
 import { DEFAULT_PERIODS } from "../data/defaults";
 
 // ─── 스타일 ──────────────────────────────────────────────────────────────────
@@ -69,6 +70,27 @@ const s = {
 
   divider:     { width: "1px", height: "20px", backgroundColor: "#e5e7eb", margin: "0 0.2rem" },
 
+  // 2-컬럼 레이아웃
+  mainGrid:         { display: "grid", gridTemplateColumns: "1fr 260px", gap: "1.5rem", alignItems: "start" },
+
+  // 진행 현황 패널
+  statusPanel:      { border: "1px solid #e5e7eb", borderRadius: "10px", backgroundColor: "#fff", position: "sticky", top: "1.5rem", overflow: "hidden" },
+  statusPanelHdr:   { padding: "0.6rem 1rem", borderBottom: "1px solid #e5e7eb", backgroundColor: "#f9fafb" },
+  statusPanelTitle: { fontSize: "0.72rem", fontWeight: 700, color: "#374151", textTransform: "uppercase", letterSpacing: "0.05em", margin: 0 },
+  statusGradeCard:  { padding: "0.75rem 1rem", borderBottom: "1px solid #f3f4f6" },
+  statusGradeLabel: { fontSize: "0.875rem", fontWeight: 700, color: "#111827" },
+  statusDetail:     { fontSize: "0.75rem", color: "#6b7280", marginTop: "0.25rem", lineHeight: 1.55, margin: "0.2rem 0 0" },
+  statusFooter:     { padding: "0.65rem 1rem" },
+  sBadgeOk:   { fontSize: "0.7rem", fontWeight: 700, backgroundColor: "#dcfce7", color: "#15803d", borderRadius: "999px", padding: "0.12rem 0.5rem" },
+  sBadgeWarn: { fontSize: "0.7rem", fontWeight: 700, backgroundColor: "#fef3c7", color: "#b45309", borderRadius: "999px", padding: "0.12rem 0.5rem" },
+  sBadgeInfo: { fontSize: "0.7rem", fontWeight: 700, backgroundColor: "#dbeafe", color: "#1d4ed8", borderRadius: "999px", padding: "0.12rem 0.5rem" },
+  sBadgeGray: { fontSize: "0.7rem", fontWeight: 700, backgroundColor: "#f3f4f6", color: "#6b7280", borderRadius: "999px", padding: "0.12rem 0.5rem" },
+
+  // 알림 배너
+  notice:    { padding: "0.6rem 1rem", borderRadius: "7px", fontSize: "0.82rem", fontWeight: 600, marginBottom: "0.75rem" },
+  noticeOk:  { backgroundColor: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0" },
+  noticeErr: { backgroundColor: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca" },
+
   // 수강생 새로고침 바
   reloadBar:   { display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.5rem 0.9rem", backgroundColor: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: "8px", marginBottom: "1rem", flexWrap: "wrap" },
   reloadLabel: { fontSize: "0.78rem", color: "#6b7280", flex: 1, minWidth: 0 },
@@ -128,6 +150,155 @@ function calcAutoCount(subject, students, enrollments) {
   return enrollments.filter(
     (e) => e.subjectName === subject.name || e.subjectId === subject.id,
   ).length;
+}
+
+// ─── 출제계획서 xlsx 파싱 ─────────────────────────────────────────────────────
+
+function parseExamPlanXlsx(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const wb = XLSX.read(e.target.result, { type: "array" });
+        const results = [];
+        wb.SheetNames.forEach((sheetName) => {
+          const ws = wb.Sheets[sheetName];
+          if (!ws) return;
+          const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+          // 행 0~6: 제목·유의사항·헤더 → 7행부터 과목 데이터
+          rows.slice(7).forEach((row) => {
+            if (!row || typeof row[0] !== "string" || !row[0].trim()) return;
+            const duration = Number(row[4]);
+            if (!duration) return; // 시험시간 없으면 스킵 (합계 등 비데이터 행)
+            // "공통국어1(4)" → "공통국어1"
+            const subjectName = row[0].replace(/\s*\(\d+\)\s*$/, "").trim();
+            const subjectCode = row[1] != null ? String(row[1]) : "";
+            // 서논술형(%): 열5, 서논술형 점수: 열9
+            const isEssay = Number(row[5]) > 0 || Number(row[9]) > 0;
+            results.push({ subjectCode, subjectName, duration, isEssay });
+          });
+        });
+        resolve(results);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+// ─── 학년별 상태 계산 ─────────────────────────────────────────────────────────
+
+function getGradeStatus(grade, subjects, examConfig, sessions) {
+  const gradeSubjects = subjects.filter((sub) => String(sub.grade) === grade);
+  if (gradeSubjects.length === 0) return null;
+
+  const selectedIds = new Set(
+    gradeSubjects.filter((sub) => examConfig[sub.id]?.hasExam).map((sub) => sub.id),
+  );
+  const confirmedSessions = sessions.filter((s) => String(s.grade) === grade);
+  const confirmedIds = new Set(confirmedSessions.map((s) => s.subjectId));
+  const placed   = confirmedSessions.filter((s) => s.dayId && s.periodId).length;
+  const unplaced = confirmedSessions.length - placed;
+
+  const inSync =
+    confirmedIds.size === selectedIds.size &&
+    [...selectedIds].every((id) => confirmedIds.has(id));
+
+  let status;
+  if (confirmedIds.size > 0 && inSync)  status = "confirmed";
+  else if (confirmedIds.size > 0)        status = "modified";
+  else if (selectedIds.size > 0)         status = "inprogress";
+  else                                   status = "idle";
+
+  return {
+    status,
+    totalSubjects: gradeSubjects.length,
+    selectedCount: selectedIds.size,
+    confirmedCount: confirmedIds.size,
+    placed,
+    unplaced,
+  };
+}
+
+// ─── 진행 현황 패널 ───────────────────────────────────────────────────────────
+
+function GradeStatusPanel({ subjects, examConfig, sessions }) {
+  const STATUS_META = {
+    confirmed:  { label: "확정",   badge: "sBadgeOk" },
+    modified:   { label: "수정중", badge: "sBadgeInfo" },
+    inprogress: { label: "진행중", badge: "sBadgeWarn" },
+    idle:       { label: "미실시", badge: "sBadgeGray" },
+  };
+
+  const totalConfirmed = sessions.length;
+  const totalUnplaced  = sessions.filter((s) => !s.dayId || !s.periodId).length;
+
+  return (
+    <div style={s.statusPanel}>
+      <div style={s.statusPanelHdr}>
+        <p style={s.statusPanelTitle}>진행 현황</p>
+      </div>
+
+      {["1", "2", "3"].map((grade) => {
+        const info = getGradeStatus(grade, subjects, examConfig, sessions);
+        if (!info) return null;
+        const { status, totalSubjects, selectedCount, confirmedCount, placed, unplaced } = info;
+        const meta = STATUS_META[status];
+
+        return (
+          <div key={grade} style={s.statusGradeCard}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={s.statusGradeLabel}>{grade}학년</span>
+              <span style={s[meta.badge]}>{meta.label}</span>
+            </div>
+            <p style={s.statusDetail}>
+              {status === "confirmed" && (
+                <>
+                  과목 {confirmedCount}개 확정
+                  {unplaced > 0
+                    ? <><br /><span style={{ color: "#b45309" }}>미배치 {unplaced}개 남음</span></>
+                    : <><br /><span style={{ color: "#15803d" }}>일정 배치 완료</span></>
+                  }
+                </>
+              )}
+              {status === "modified" && (
+                <>
+                  이전 확정 {confirmedCount}개 → 현재 {selectedCount}개
+                  <br /><span style={{ color: "#1d4ed8" }}>재확정이 필요합니다</span>
+                </>
+              )}
+              {status === "inprogress" && (
+                <>
+                  {totalSubjects}과목 중 {selectedCount}개 선택됨
+                  <br /><span style={{ color: "#b45309" }}>확정 버튼을 눌러주세요</span>
+                </>
+              )}
+              {status === "idle" && (
+                <>
+                  과목 {totalSubjects}개
+                  <br /><span style={{ color: "#9ca3af" }}>응시 과목을 선택하세요</span>
+                </>
+              )}
+            </p>
+          </div>
+        );
+      })}
+
+      <div style={s.statusFooter}>
+        {totalConfirmed === 0 ? (
+          <p style={{ fontSize: "0.75rem", color: "#9ca3af", margin: 0 }}>확정된 세션이 없습니다</p>
+        ) : (
+          <p style={{ fontSize: "0.75rem", color: "#6b7280", margin: 0 }}>
+            전체 확정 <strong style={{ color: "#111827" }}>{totalConfirmed}개</strong>
+            {totalUnplaced > 0 && (
+              <span style={{ color: "#b45309" }}> · 미배치 {totalUnplaced}개</span>
+            )}
+          </p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ─── 학생 목록 모달 ───────────────────────────────────────────────────────────
@@ -191,10 +362,9 @@ function StudentListModal({ subject, students, enrollments, onClose }) {
 // ─── 메인 컴포넌트 ────────────────────────────────────────────────────────────
 
 const GRADE_TABS = [
-  { key: "all", label: "전체" },
-  { key: "1",   label: "1학년" },
-  { key: "2",   label: "2학년" },
-  { key: "3",   label: "3학년" },
+  { key: "1", label: "1학년" },
+  { key: "2", label: "2학년" },
+  { key: "3", label: "3학년" },
 ];
 
 function formatLoadedAt(ts) {
@@ -227,11 +397,13 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
     (plan.periods?.length ? plan.periods : DEFAULT_PERIODS).map(normalizePeriod),
   );
   const [examConfig, setExamConfig] = useState({});
-  const [gradeFilter, setGradeFilter] = useState("all");
+  const [gradeFilter, setGradeFilter] = useState("1");
   const [settingsOpen, setSettingsOpen] = useState(true);
   const [modalSubject, setModalSubject] = useState(null);
   const [isReloading, setIsReloading] = useState(false);
   const [enrollmentDiff, setEnrollmentDiff] = useState(null);
+  const [xlsxImportResult, setXlsxImportResult] = useState(null);
+  const xlsxInputRef = useRef(null);
   const planSessionsRef = useRef(plan.sessions);
   planSessionsRef.current = plan.sessions;
 
@@ -315,12 +487,51 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
     }
   };
 
-  // ── 세션 생성 적용 ──
+  // ── 출제계획서 xlsx 업로드 ──
+  const handleXlsxImport = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    try {
+      const parsed = await parseExamPlanXlsx(file);
+      let matched = 0, unmatched = 0;
+      const updates = {};
+      parsed.forEach(({ subjectCode, subjectName, duration, isEssay }) => {
+        const subject = subjects.find(
+          (s) =>
+            (subjectCode && String(s.subjectCode) === subjectCode) ||
+            s.name === subjectName ||
+            s.name.replace(/\s/g, "") === subjectName.replace(/\s/g, ""),
+        );
+        if (subject) {
+          updates[subject.id] = { hasExam: true, duration, isEssay };
+          matched++;
+        } else {
+          unmatched++;
+        }
+      });
+      setExamConfig((prev) => {
+        const next = { ...prev };
+        Object.entries(updates).forEach(([id, patch]) => {
+          next[id] = { ...next[id], ...patch };
+        });
+        return next;
+      });
+      setXlsxImportResult({ matched, unmatched });
+      setTimeout(() => setXlsxImportResult(null), 5000);
+    } catch {
+      setXlsxImportResult({ error: true });
+      setTimeout(() => setXlsxImportResult(null), 5000);
+    }
+  };
+
+  // ── 현재 학년 세션 확정 ──
   const handleApply = () => {
     const sessionBySubjectId = Object.fromEntries(plan.sessions.map((s) => [s.subjectId, s]));
 
-    const newSessions = subjects
-      .filter((subject) => examConfig[subject.id]?.hasExam)
+    // 현재 학년의 새 세션
+    const currentGradeSessions = semesterSubjects
+      .filter((subject) => String(subject.grade) === gradeFilter && examConfig[subject.id]?.hasExam)
       .map((subject) => {
         const cfg      = examConfig[subject.id] ?? {};
         const existing = sessionBySubjectId[subject.id];
@@ -329,7 +540,6 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
           cfg.studentCountOverride !== null && cfg.studentCountOverride !== undefined
             ? Number(cfg.studentCountOverride)
             : autoCount;
-
         return {
           id:          existing?.id ?? `session-${subject.id}`,
           subjectId:   subject.id,
@@ -349,7 +559,9 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
         };
       });
 
-    onPlanChange({ name: planName, semester, days, periods, sessions: newSessions });
+    // 다른 학년 세션은 그대로 유지
+    const otherSessions = plan.sessions.filter((s) => String(s.grade) !== gradeFilter);
+    onPlanChange({ name: planName, semester, days, periods, sessions: [...otherSessions, ...currentGradeSessions] });
   };
 
   // ── 파생값 ──
@@ -371,13 +583,10 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
     "3": (subjectsByGrade["3"] ?? []).length,
   };
 
-  const filteredSubjects =
-    gradeFilter === "all"
-      ? semesterSubjects
-      : (subjectsByGrade[gradeFilter] ?? []);
+  const filteredSubjects = subjectsByGrade[gradeFilter] ?? [];
 
-  const selectedCount = semesterSubjects.filter((s) => examConfig[s.id]?.hasExam).length;
-  const totalStudentCount = semesterSubjects
+  const selectedCount = filteredSubjects.filter((s) => examConfig[s.id]?.hasExam).length;
+  const totalStudentCount = filteredSubjects
     .filter((s) => examConfig[s.id]?.hasExam)
     .reduce((sum, subject) => {
       const cfg = examConfig[subject.id] ?? {};
@@ -389,44 +598,18 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
       );
     }, 0);
 
-  const renderRows = () => {
-    if (gradeFilter !== "all") {
-      return filteredSubjects.map((subject) => (
-        <SubjectRow
-          key={subject.id}
-          subject={subject}
-          config={examConfig[subject.id] ?? { hasExam: false, duration: 50, isEssay: false, studentCountOverride: null }}
-          students={students}
-          enrollments={enrollments}
-          onConfigChange={(patch) => updateConfig(subject.id, patch)}
-          onNameClick={() => setModalSubject(subject)}
-        />
-      ));
-    }
-
-    return ["1", "2", "3"].map((grade) => {
-      const gradeSubjects = subjectsByGrade[grade] ?? [];
-      if (gradeSubjects.length === 0) return null;
-      return (
-        <Fragment key={`g${grade}`}>
-          <tr>
-            <td colSpan={8} style={s.gradeRow}>{grade}학년</td>
-          </tr>
-          {gradeSubjects.map((subject) => (
-            <SubjectRow
-              key={subject.id}
-              subject={subject}
-              config={examConfig[subject.id] ?? { hasExam: false, duration: 50, isEssay: false, studentCountOverride: null }}
-              students={students}
-              enrollments={enrollments}
-              onConfigChange={(patch) => updateConfig(subject.id, patch)}
-              onNameClick={() => setModalSubject(subject)}
-            />
-          ))}
-        </Fragment>
-      );
-    });
-  };
+  const renderRows = () =>
+    filteredSubjects.map((subject) => (
+      <SubjectRow
+        key={subject.id}
+        subject={subject}
+        config={examConfig[subject.id] ?? { hasExam: false, duration: 50, isEssay: false, studentCountOverride: null }}
+        students={students}
+        enrollments={enrollments}
+        onConfigChange={(patch) => updateConfig(subject.id, patch)}
+        onNameClick={() => setModalSubject(subject)}
+      />
+    ));
 
   return (
     <div style={s.page}>
@@ -436,9 +619,7 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
           <p style={s.eyebrow}>시험계획</p>
           <h2 style={s.pageTitle}>응시 과목 확정</h2>
         </div>
-        <div style={s.btnRow}>
-          <button style={s.primaryBtn} onClick={handleApply}>시험 과목 확정</button>
-        </div>
+        <div />
       </div>
 
       {/* ── 수강생 데이터 새로고침 바 ── */}
@@ -464,6 +645,10 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
           })()}
         </div>
       )}
+
+      {/* ── 메인 2컬럼 그리드 ── */}
+      <div style={s.mainGrid}>
+      <div> {/* 왼쪽 컬럼 */}
 
       {/* ── 설정 섹션 (접기 가능) ── */}
       <div style={s.settingsBox}>
@@ -613,7 +798,7 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
         )}
       </div>
 
-      {/* ── 학년 필터 탭 ── */}
+      {/* ── 학년 필터 탭 + 출제계획서 업로드 ── */}
       <div style={s.filterRow}>
         {GRADE_TABS.map((tab) => {
           const active = gradeFilter === tab.key;
@@ -630,16 +815,34 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
           );
         })}
         <div style={s.divider} />
-        <span style={{ fontSize: "0.78rem", color: "#6b7280" }}>
-          {students.length === 0 && "⚠ 학생 데이터 없음 — "}
-          {enrollments.length === 0 && students.length > 0 && "학생선택과목 수강생 수: 학생 업로드 시 자동 계산"}
-        </span>
+        <input
+          ref={xlsxInputRef}
+          type="file"
+          accept=".xlsx"
+          style={{ display: "none" }}
+          onChange={handleXlsxImport}
+        />
+        <button style={s.outlineBtn} onClick={() => xlsxInputRef.current?.click()}>
+          출제계획서 업로드
+        </button>
+        <span style={{ fontSize: "0.78rem", color: "#9ca3af" }}>응시여부·시험시간·서논술 자동 설정</span>
+        <button style={{ ...s.primaryBtn, marginLeft: "auto" }} onClick={handleApply}>{gradeFilter}학년 과목 확정</button>
       </div>
+
+      {/* ── 업로드 결과 알림 ── */}
+      {xlsxImportResult && (
+        <div style={{ ...s.notice, ...(xlsxImportResult.error ? s.noticeErr : s.noticeOk) }}>
+          {xlsxImportResult.error
+            ? "파일 파싱 중 오류가 발생했습니다."
+            : `${xlsxImportResult.matched}개 과목 자동 설정 완료${xlsxImportResult.unmatched > 0 ? ` · ${xlsxImportResult.unmatched}개 미매칭 (과목명 확인 필요)` : " · 전체 매칭 성공"}`
+          }
+        </div>
+      )}
 
       {/* ── 요약 스트립 ── */}
       <div style={s.summaryStrip}>
         {semester && <span style={{ ...s.summaryChip, backgroundColor: "#ede9fe", color: "#6d28d9" }}>{semester}학기</span>}
-        <span style={s.summaryChip}>표시 과목 {semesterSubjects.length}개</span>
+        <span style={s.summaryChip}>{gradeFilter}학년 과목 {filteredSubjects.length}개</span>
         <span style={s.summaryChip}>시험 선택 {selectedCount}개</span>
         <span style={s.summaryChip}>응시생 연인원 {totalStudentCount}명</span>
         {students.length === 0 && (
@@ -689,6 +892,17 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
           </table>
         </div>
       )}
+
+      </div> {/* 왼쪽 컬럼 끝 */}
+
+      {/* 오른쪽 컬럼: 진행 현황 패널 */}
+      <GradeStatusPanel
+        subjects={semesterSubjects}
+        examConfig={examConfig}
+        sessions={plan.sessions}
+      />
+
+      </div> {/* mainGrid 끝 */}
 
       {/* ── 학생 목록 모달 ── */}
       {modalSubject && (
