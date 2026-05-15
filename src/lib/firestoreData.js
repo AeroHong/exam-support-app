@@ -4,8 +4,10 @@ import {
   deleteDoc,
   doc,
   getDocs,
+  query,
   serverTimestamp,
   setDoc,
+  where,
   writeBatch,
 } from "firebase/firestore";
 import { firebaseDb } from "./firebase";
@@ -52,6 +54,14 @@ export async function saveStudent(schoolId, student) {
  */
 export async function deleteStudent(schoolId, studentId) {
   await deleteDoc(doc(firebaseDb, "schools", schoolId, "students", studentId));
+  // cascade: 해당 학생 enrollment 삭제
+  const q = query(collection(firebaseDb, "schools", schoolId, "enrollments"), where("studentId", "==", studentId));
+  const snap = await getDocs(q);
+  if (!snap.empty) {
+    const batch = writeBatch(firebaseDb);
+    snap.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
 }
 
 /**
@@ -103,6 +113,19 @@ export async function deleteStudentsByGrade(schoolId, grade) {
       batch.delete(doc(firebaseDb, "schools", schoolId, "students", s.id));
     });
     await batch.commit();
+  }
+  // cascade: 해당 학년(또는 전체) enrollment 삭제
+  const enrollmentsRef = collection(firebaseDb, "schools", schoolId, "enrollments");
+  const q = grade
+    ? query(enrollmentsRef, where("grade", "==", grade))
+    : getDocs(enrollmentsRef); // 전체
+  const snap = await (grade ? getDocs(q) : q);
+  if (!snap.empty) {
+    for (let i = 0; i < snap.docs.length; i += CHUNK) {
+      const batch = writeBatch(firebaseDb);
+      snap.docs.slice(i, i + CHUNK).forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    }
   }
 }
 

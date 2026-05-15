@@ -127,6 +127,21 @@ const s = {
   applyBtn:     { width: "100%", padding: "0.3rem", backgroundColor: "#4f46e5", color: "#fff", border: "none", borderRadius: "6px", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600 },
 
   emptyBoard:  { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", color: "#9ca3af", fontSize: "0.9rem", gap: "0.5rem" },
+
+  sBadgeOk:   { fontSize: "0.72rem", fontWeight: 700, backgroundColor: "#dcfce7", color: "#15803d", borderRadius: "999px", padding: "0.15rem 0.55rem" },
+  sBadgeWarn: { fontSize: "0.72rem", fontWeight: 700, backgroundColor: "#fef3c7", color: "#b45309", borderRadius: "999px", padding: "0.15rem 0.55rem" },
+  sBadgeInfo: { fontSize: "0.72rem", fontWeight: 700, backgroundColor: "#dbeafe", color: "#1d4ed8", borderRadius: "999px", padding: "0.15rem 0.55rem" },
+
+  // 학생 명단 모달
+  modalOverlay: { position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.35)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" },
+  modalBox:     { backgroundColor: "#fff", borderRadius: "12px", width: "340px", maxHeight: "70vh", display: "flex", flexDirection: "column", boxShadow: "0 8px 32px rgba(0,0,0,0.18)" },
+  modalHeader:  { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0.8rem 1rem", borderBottom: "1px solid #e5e7eb", flexShrink: 0 },
+  modalTitle:   { fontSize: "0.88rem", fontWeight: 700, color: "#111827" },
+  modalClose:   { background: "none", border: "none", cursor: "pointer", fontSize: "1rem", color: "#9ca3af", lineHeight: 1, padding: "2px 4px" },
+  modalBody:    { flex: 1, overflowY: "auto", padding: "0.4rem 0.8rem" },
+  modalRow:     { padding: "0.32rem 0.2rem", fontSize: "0.8rem", color: "#374151", borderBottom: "1px solid #f3f4f6" },
+  modalEmpty:   { padding: "1.5rem 0", textAlign: "center", fontSize: "0.82rem", color: "#9ca3af" },
+  modalCount:   { padding: "0.4rem 1rem 0.25rem", fontSize: "0.72rem", color: "#6b7280", borderBottom: "1px solid #f3f4f6", flexShrink: 0 },
 };
 
 // ── 메인 컴포넌트 ─────────────────────────────────────────────────────────────
@@ -134,6 +149,7 @@ const s = {
 export default function ScheduleBoardPage({
   days, periods, sessions, students, enrollments,
   onMove, onSessionChange, onDayChange, onSwapDays, onResetPlacements,
+  scheduleConfirmed, onConfirmSchedule, onDeconfirmSchedule,
 }) {
   const [gradeFilter, setGradeFilter] = useState("1");
   const [dragId, setDragId]           = useState(null);        // 세션 드래그
@@ -143,6 +159,7 @@ export default function ScheduleBoardPage({
   const [editingDayId, setEditingDayId] = useState(null);      // 요일 텍스트 편집
   const [editingLabel, setEditingLabel] = useState("");
   const [previews, setPreviews]       = useState(null);        // 자동배치 미리보기
+  const [modal, setModal]             = useState(null);        // 학생 명단 모달
 
   // 현재 학년 세션
   const gradeSessions = useMemo(
@@ -175,10 +192,15 @@ export default function ScheduleBoardPage({
     return map;
   }, [sessions, studentSets, days, periods, gradeFilter]);
 
-  // 전체 학년 학생 수 (feature 2용)
-  const totalGradeStudents = useMemo(
-    () => students.filter((s) => String(s.grade) === gradeFilter).length,
+  // 학년 학생 목록 및 ID 조회맵
+  const gradeStudents = useMemo(
+    () => students.filter((s) => String(s.grade) === gradeFilter),
     [students, gradeFilter],
+  );
+  const totalGradeStudents = gradeStudents.length;
+  const studentsById = useMemo(
+    () => Object.fromEntries(students.map((s) => [s.id, s])),
+    [students],
   );
 
   // 드래그 대상이 슬롯에 drop 가능한지
@@ -270,6 +292,7 @@ export default function ScheduleBoardPage({
   }
 
   return (
+    <>
     <div style={s.page}>
       {/* ── 상단 컨트롤 바 ── */}
       <div style={s.topBar}>
@@ -278,15 +301,43 @@ export default function ScheduleBoardPage({
           {["1", "2", "3"].map((g) => {
             const { total, placed } = gradeTabInfo(g);
             const active = gradeFilter === g;
+            const confirmed = scheduleConfirmed?.[g] ?? false;
             return (
               <button key={g} style={active ? s.tabActive : s.tab}
                 onClick={() => { setGradeFilter(g); setDragId(null); setPreviews(null); }}
               >
-                {g}학년<span style={active ? s.badgeBlue : s.badge}>{placed}/{total}</span>
+                {g}학년{confirmed ? " ✓" : ""}<span style={active ? s.badgeBlue : s.badge}>{placed}/{total}</span>
               </button>
             );
           })}
         </div>
+        <div style={s.sep} />
+        {(() => {
+          const { total, placed } = gradeTabInfo(gradeFilter);
+          const confirmed = scheduleConfirmed?.[gradeFilter] ?? false;
+          const allPlaced = total > 0 && placed === total;
+          return (
+            <>
+              {confirmed
+                ? <span style={s.sBadgeOk}>✓ {gradeFilter}학년 확정됨</span>
+                : allPlaced
+                ? <span style={s.sBadgeInfo}>배치 완료 — 확정해주세요</span>
+                : <span style={s.sBadgeWarn}>{placed}/{total} 배치됨</span>
+              }
+              {total > 0 && (
+                confirmed
+                  ? <button style={s.outlineBtn} onClick={() => onDeconfirmSchedule?.(gradeFilter)}>확정 해제</button>
+                  : <button
+                      style={{ ...s.primaryBtn, ...(allPlaced ? {} : { opacity: 0.5, cursor: "not-allowed" }) }}
+                      onClick={() => allPlaced && onConfirmSchedule?.(gradeFilter)}
+                      disabled={!allPlaced}
+                    >
+                      {allPlaced ? "배치 확정" : `미배치 ${total - placed}개`}
+                    </button>
+              )}
+            </>
+          );
+        })()}
         <div style={s.sep} />
         <button style={s.primaryBtn} onClick={handlePreview} disabled={unplaced.length === 0}>
           자동 배치 미리보기 ({unplaced.length}개)
@@ -419,7 +470,17 @@ export default function ScheduleBoardPage({
                       {pStat && (pStat.testingCount > 0 || pStat.waitingCount > 0) && (
                         <div style={{ marginTop: "auto" }}>
                           {pStat.testingCount > 0 && <div style={s.cellStat}>응시 {pStat.testingCount}명</div>}
-                          {pStat.waitingCount > 0 && <div style={s.cellWait}>대기 {pStat.waitingCount}명</div>}
+                          {pStat.waitingCount > 0 && (
+                            <div
+                              style={{ ...s.cellWait, cursor: "pointer", textDecoration: "underline" }}
+                              onClick={() => setModal({
+                                title: `${day.label} ${period.label} 대기 학생`,
+                                studentIds: [...(pStat.waitingStudentIds ?? [])],
+                              })}
+                            >
+                              대기 {pStat.waitingCount}명
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -435,9 +496,17 @@ export default function ScheduleBoardPage({
             {days.map((day) => {
               const dayStudentCount = dayStatsMap[day.id]?.dayStudentCount ?? 0;
               const noExamCount = totalGradeStudents - dayStudentCount;
+              const dayStudentIds = dayStatsMap[day.id]?.dayStudentIds;
               return (
                 <div key={`noexam-${day.id}`} style={s.summaryCell}>
-                  <div style={{ ...s.noExamBig, color: noExamCount > 0 ? "#374151" : "#9ca3af" }}>
+                  <div
+                    style={{ ...s.noExamBig, color: noExamCount > 0 ? "#374151" : "#9ca3af", cursor: noExamCount > 0 ? "pointer" : "default", textDecoration: noExamCount > 0 ? "underline" : "none" }}
+                    onClick={() => {
+                      if (noExamCount === 0) return;
+                      const ids = gradeStudents.filter((st) => !dayStudentIds?.has(st.id)).map((st) => st.id);
+                      setModal({ title: `${day.label} 시험 없는 학생`, studentIds: ids });
+                    }}
+                  >
                     {noExamCount}명
                   </div>
                   <div style={s.noExamLabel}>시험 없음</div>
@@ -493,6 +562,37 @@ export default function ScheduleBoardPage({
         </div>
       </div>
     </div>
+
+    {/* ── 학생 명단 모달 ── */}
+    {modal && (() => {
+      const sorted = modal.studentIds
+        .map((id) => studentsById[id])
+        .filter(Boolean)
+        .sort((a, b) => Number(a.classNo) - Number(b.classNo) || Number(a.number) - Number(b.number));
+      return (
+        <div style={s.modalOverlay} onClick={() => setModal(null)}>
+          <div style={s.modalBox} onClick={(e) => e.stopPropagation()}>
+            <div style={s.modalHeader}>
+              <span style={s.modalTitle}>{modal.title}</span>
+              <button style={s.modalClose} onClick={() => setModal(null)}>✕</button>
+            </div>
+            <div style={s.modalCount}>{sorted.length}명</div>
+            <div style={s.modalBody}>
+              {sorted.length === 0 ? (
+                <div style={s.modalEmpty}>해당 학생 없음</div>
+              ) : (
+                sorted.map((st) => (
+                  <div key={st.id} style={s.modalRow}>
+                    {st.classNo}반 {st.number}번&nbsp;&nbsp;{st.name}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    })()}
+    </>
   );
 }
 

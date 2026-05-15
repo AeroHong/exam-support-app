@@ -38,6 +38,7 @@ const s = {
   notice:       { padding: "0.55rem 1.5rem", fontSize: "0.82rem", fontWeight: 600 },
   noticeWarn:   { backgroundColor: "#fff7ed", color: "#b45309", borderBottom: "1px solid #fed7aa" },
   noticeErr:    { backgroundColor: "#fef2f2", color: "#dc2626", borderBottom: "1px solid #fecaca" },
+  dataChangeBar: { display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.5rem 1.5rem", backgroundColor: "#eff6ff", borderBottom: "1px solid #bfdbfe", fontSize: "0.82rem", color: "#1e40af" },
 };
 
 function SaveBadge({ status }) {
@@ -54,6 +55,7 @@ function App() {
   const [draftStudents, setDraftStudents] = useState([]);
   const [draftEnrollments, setDraftEnrollments] = useState([]);
   const [versionModalOpen, setVersionModalOpen] = useState(false);
+  const [dataChangeLog, setDataChangeLog] = useState(null); // { grade, delta, type, affectedGrades }
 
   const tenantData = useTenantData({
     schoolId: auth.profile?.schoolId,
@@ -108,6 +110,57 @@ function App() {
       duration: nextSlot.duration ?? sessionsById[sessionId].duration,
       dateLabel: nextSlot.dateLabel ?? nextDay?.label ?? sessionsById[sessionId].dateLabel,
     });
+  };
+
+  // 수강생 데이터 변동 처리: cascade reload + studentCount 재계산 + 확정 해제
+  const handleDataChanged = async ({ grade, delta, type }) => {
+    const newData = await tenantData.reload();
+    if (!newData) return;
+
+    const { students: ns, enrollments: ne } = newData;
+    const affectedGrades = grade === "all" ? ["1", "2", "3"] : [String(grade)];
+
+    planner.setPlan((cur) => {
+      const sessions = cur.sessions.map((session) => {
+        if (!affectedGrades.includes(String(session.grade))) return session;
+        // statusSpecial(특수/별도고사실 변경)은 응시 인원수에 영향 없음
+        if (type === "statusSpecial") return session;
+        const newCount = session.isRequired
+          ? ns.filter((s) => String(s.grade) === String(session.grade) && s.examStatus !== "delegation").length
+          : ne.filter((e) =>
+              String(e.grade) === String(session.grade) &&
+              (e.subjectName === session.subjectName ||
+                (e.subjectId && e.subjectId === session.subjectId)),
+            ).length;
+        return { ...session, studentCount: newCount };
+      });
+
+      const sc = { ...(cur.scheduleConfirmed ?? {}) };
+      const rc = { ...(cur.roomConfirmed ?? {}) };
+      // 위탁 변경: 응시 인원 변동 → 일정·고사실 확정 모두 해제
+      // 특수/별도 변경: 물리 좌석 배치만 달라짐 → 고사실 확정만 해제
+      if (type !== "statusSpecial") {
+        affectedGrades.forEach((g) => { sc[g] = false; });
+      }
+      affectedGrades.forEach((g) => { rc[g] = false; });
+
+      return { ...cur, sessions, scheduleConfirmed: sc, roomConfirmed: rc };
+    });
+
+    setDataChangeLog({ grade, delta, type, affectedGrades, timestamp: Date.now() });
+  };
+
+  const handleConfirmSchedule = (grade) => {
+    planner.setPlan((cur) => ({ ...cur, scheduleConfirmed: { ...(cur.scheduleConfirmed ?? {}), [grade]: true } }));
+  };
+  const handleDeconfirmSchedule = (grade) => {
+    planner.setPlan((cur) => ({ ...cur, scheduleConfirmed: { ...(cur.scheduleConfirmed ?? {}), [grade]: false } }));
+  };
+  const handleConfirmRoom = (grade) => {
+    planner.setPlan((cur) => ({ ...cur, roomConfirmed: { ...(cur.roomConfirmed ?? {}), [grade]: true } }));
+  };
+  const handleDeconfirmRoom = (grade) => {
+    planner.setPlan((cur) => ({ ...cur, roomConfirmed: { ...(cur.roomConfirmed ?? {}), [grade]: false } }));
   };
 
   // 학년 배치 초기화 — 단일 업데이트 후 Firestore 즉시 저장
@@ -208,11 +261,32 @@ function App() {
       {tenantData.error && <div style={{ ...s.notice, ...s.noticeErr }}>{tenantData.error}</div>}
       {planner.error  && <div style={{ ...s.notice, ...s.noticeErr }}>{planner.error}</div>}
       {planner.saveError && <div style={{ ...s.notice, ...s.noticeErr }}>{planner.saveError}</div>}
+      {dataChangeLog && (
+        <div style={s.dataChangeBar}>
+          <span>📋</span>
+          <span style={{ flex: 1 }}>
+            <strong>수강생 데이터 변동</strong>
+            {" — "}
+            {dataChangeLog.grade === "all" ? "전체 학년" : `${dataChangeLog.grade}학년`}
+            {dataChangeLog.delta < 0 && ` ${Math.abs(dataChangeLog.delta)}명 삭제`}
+            {dataChangeLog.delta > 0 && ` ${dataChangeLog.delta}명 업로드`}
+            {dataChangeLog.type === "statusDelegation" && " 위탁 처리 변경 — 응시 인원이 재계산됐습니다. 영향받은 학년의 일정·고사실 확정이 해제됐으니 재확인 후 다시 확정해주세요."}
+            {dataChangeLog.type === "statusSpecial" && " 응시 형태 변경 — 고사실 좌석 배치가 달라질 수 있습니다. 고사실 배정 확정이 해제됐으니 재확인 후 다시 확정해주세요."}
+            {dataChangeLog.type !== "statusDelegation" && dataChangeLog.type !== "statusSpecial" && " · 응시 인원이 자동 재계산됐습니다. 영향받은 학년의 일정·고사실 배정 확정이 해제됐으니 재확인 후 다시 확정해주세요."}
+          </span>
+          <button
+            style={{ padding: "0.2rem 0.65rem", backgroundColor: "#fff", color: "#1e40af", border: "1px solid #bfdbfe", borderRadius: "5px", cursor: "pointer", fontSize: "0.78rem", fontWeight: 600, flexShrink: 0 }}
+            onClick={() => setDataChangeLog(null)}
+          >
+            확인
+          </button>
+        </div>
+      )}
 
       {/* ── 페이지 콘텐츠 ── */}
       <main>
         {activePage === "data" ? (
-          <DataManagementPage schoolId={auth.profile?.schoolId} students={effectiveStudents} subjects={tenantData.subjects ?? []} />
+          <DataManagementPage schoolId={auth.profile?.schoolId} students={effectiveStudents} subjects={tenantData.subjects ?? []} onDataChanged={handleDataChanged} />
         ) : null}
 
         {activePage === "examplan" ? (
@@ -242,6 +316,9 @@ function App() {
                 ),
               }))
             }
+            roomConfirmed={plan.roomConfirmed ?? {}}
+            onConfirmRoom={handleConfirmRoom}
+            onDeconfirmRoom={handleDeconfirmRoom}
           />
         ) : null}
 
@@ -271,6 +348,9 @@ function App() {
                 }),
               }))
             }
+            scheduleConfirmed={plan.scheduleConfirmed ?? {}}
+            onConfirmSchedule={handleConfirmSchedule}
+            onDeconfirmSchedule={handleDeconfirmSchedule}
           />
         ) : null}
 

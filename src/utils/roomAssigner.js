@@ -35,23 +35,36 @@ function getExtraRooms(rooms) {
 }
 
 /**
- * session에 수강하는 학생 목록 반환
+ * session에 수강하는 학생 목록 반환 (위탁 제외)
  * 지정과목 → 해당 학년 전체 / 선택과목 → enrollments 기반
+ * @returns {{ all: object[], seated: object[], special: object[] }}
+ *   all     = 위탁 제외 전체 (응시현황표 표시 대상)
+ *   seated  = 물리 좌석 필요 (정상 응시만)
+ *   special = 특수학급·별도고사실 (별도 표시)
  */
 function getEnrolledStudents(session, students, enrollments) {
+  let all;
   if (session.isRequired) {
-    return students
-      .filter((s) => String(s.grade) === String(session.grade))
+    all = students
+      .filter((s) => String(s.grade) === String(session.grade) && s.examStatus !== "delegation")
+      .sort((a, b) => a.id.localeCompare(b.id));
+  } else {
+    const enrolled = new Set(
+      enrollments
+        .filter((e) => {
+          if (String(e.grade) !== String(session.grade)) return false;
+          if (session.subjectId && e.subjectId) return e.subjectId === session.subjectId;
+          return e.subjectName === session.subjectName;
+        })
+        .map((e) => e.studentId),
+    );
+    all = students
+      .filter((s) => enrolled.has(s.id) && s.examStatus !== "delegation")
       .sort((a, b) => a.id.localeCompare(b.id));
   }
-  const enrolled = new Set(
-    enrollments
-      .filter((e) => e.subjectName === session.subjectName || e.subjectId === session.subjectId)
-      .map((e) => e.studentId),
-  );
-  return students
-    .filter((s) => enrolled.has(s.id))
-    .sort((a, b) => a.id.localeCompare(b.id));
+  const seated  = all.filter((s) => !s.examStatus || s.examStatus === "");
+  const special = all.filter((s) => s.examStatus === "special" || s.examStatus === "separate");
+  return { all, seated, special };
 }
 
 /**
@@ -98,14 +111,17 @@ function assignRequired(session, rooms) {
  * @param {object[]} enrolledStudents - 수강생 (학번순 정렬됨)
  * @returns {{ roomIds: string[], nextPointer: number }}
  */
+// enrolledStudents: { all, seated, special } — seated만 물리 좌석 계산에 사용
 function assignElective(session, gradeClassRooms, extraRooms, usedRoomIds, poolPointer, enrolledStudents) {
-  const studentCount = session.studentCount ?? 0;
+  const seatedStudents = Array.isArray(enrolledStudents) ? enrolledStudents : (enrolledStudents.seated ?? []);
+  const allStudents    = Array.isArray(enrolledStudents) ? enrolledStudents : (enrolledStudents.all ?? []);
+  const studentCount   = seatedStudents.length || (session.studentCount ?? 0);
   if (studentCount === 0) return { roomIds: [], nextPointer: poolPointer };
 
   // 수강생 중 학번이 가장 빠른 학생의 반 → 시작 교실 찾기
   let startIdx = poolPointer;
-  if (enrolledStudents.length > 0) {
-    const firstClassNo = String(enrolledStudents[0].classNo);
+  if (allStudents.length > 0) {
+    const firstClassNo = String(allStudents[0].classNo);
     const preferred = gradeClassRooms.findIndex(
       (r) => r.name === classKey(session.grade, firstClassNo),
     );
@@ -115,35 +131,42 @@ function assignElective(session, gradeClassRooms, extraRooms, usedRoomIds, poolP
     }
   }
 
-  // 교실 풀: startIdx부터 순서대로 (wrap하지 않음)
-  const pool = gradeClassRooms.slice(startIdx).filter((r) => !usedRoomIds.has(r.id));
+  // 교실 풀: startIdx부터 끝 → 부족하면 앞쪽 미사용 교실도 wrap
+  const afterStart  = gradeClassRooms.slice(startIdx).filter((r) => !usedRoomIds.has(r.id));
+  const beforeStart = gradeClassRooms.slice(0, startIdx).filter((r) => !usedRoomIds.has(r.id));
+  const orderedPool = [...afterStart, ...beforeStart];
 
   const assignedRooms = [];
   let remaining = studentCount;
 
-  for (const room of pool) {
+  for (const room of orderedPool) {
     if (remaining <= 0) break;
     assignedRooms.push(room);
     remaining -= room.capacity;
   }
 
-  // ≤10명 통합 시도
-  if (remaining > 0 && remaining <= 10) {
+  // 학급 교실로도 부족하면 추가 고사실 사용 (인원수 무관)
+  if (remaining > 0) {
     const allUsed = new Set([...usedRoomIds, ...assignedRooms.map((r) => r.id)]);
-    const consolidated = tryConsolidate(assignedRooms, remaining, extraRooms, allUsed);
-    if (consolidated) {
-      const nextPointer = startIdx + consolidated.filter(isClassRoom).length;
-      return { roomIds: consolidated.map((r) => r.id), nextPointer };
+    if (remaining <= 10) {
+      // 마지막 교실과 통합 시도
+      const consolidated = tryConsolidate(assignedRooms, remaining, extraRooms, allUsed);
+      if (consolidated) {
+        const nextPointer = poolPointer + consolidated.filter(isClassRoom).length;
+        return { roomIds: consolidated.map((r) => r.id), nextPointer };
+      }
     }
-    // 통합 실패 → 추가 고사실에서 남은 인원용 방 찾기
-    const fallback = extraRooms.find((r) => r.capacity >= remaining && !allUsed.has(r.id));
-    if (fallback) {
-      assignedRooms.push(fallback);
-      remaining = 0;
+    // 추가 고사실로 남은 인원 순차 배정
+    for (const r of extraRooms) {
+      if (remaining <= 0) break;
+      if (allUsed.has(r.id)) continue;
+      assignedRooms.push(r);
+      allUsed.add(r.id);
+      remaining -= r.capacity;
     }
   }
 
-  const nextPointer = startIdx + assignedRooms.filter(isClassRoom).length;
+  const nextPointer = poolPointer + assignedRooms.filter(isClassRoom).length;
   return { roomIds: assignedRooms.map((r) => r.id), nextPointer };
 }
 
@@ -183,15 +206,19 @@ export function autoAssignAllRooms(sessions, rooms, students, enrollments) {
     for (const key of periodKeys) {
       const [dayId, periodId] = key.split("__");
 
-      // 같은 교시의 선택과목 — 인원수 오름차순
+      // 같은 교시의 선택과목 — 실제 착석 인원 오름차순
       const periodElective = gradeSessions
         .filter((s) => !s.isRequired && s.dayId === dayId && s.periodId === periodId)
-        .sort((a, b) => (a.studentCount ?? 0) - (b.studentCount ?? 0));
+        .sort((a, b) => {
+          const countA = getEnrolledStudents(a, students, enrollments).seated.length || (a.studentCount ?? 0);
+          const countB = getEnrolledStudents(b, students, enrollments).seated.length || (b.studentCount ?? 0);
+          return countA - countB;
+        });
 
-      // 지정과목이 이미 점유한 방 + 이번 교시 배정 결과를 순차 추적
+      // 동일 교시·날짜의 지정과목이 점유한 방만 제외 (다른 교시 지정과목 방은 재사용 가능)
       const usedRoomIds = new Set(
         gradeSessions
-          .filter((s) => s.isRequired)
+          .filter((s) => s.isRequired && s.dayId === dayId && s.periodId === periodId)
           .flatMap((s) => result[s.id] ?? []),
       );
       let pointer = 0;

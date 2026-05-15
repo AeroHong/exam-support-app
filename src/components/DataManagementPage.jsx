@@ -19,7 +19,7 @@ const s = {
   tabActive: { padding: "0.3rem 0.75rem", border: "1px solid #4f46e5", borderRadius: "999px", cursor: "pointer", fontSize: "0.82rem", backgroundColor: "#eef2ff", color: "#4f46e5", fontWeight: 700 },
 };
 
-export default function DataManagementPage({ schoolId, students = [], subjects = [] }) {
+export default function DataManagementPage({ schoolId, students = [], subjects = [], onDataChanged }) {
   const [activeTab, setActiveTab] = useState("students");
 
   return (
@@ -41,7 +41,7 @@ export default function DataManagementPage({ schoolId, students = [], subjects =
         ))}
       </div>
 
-      {activeTab === "students" && <StudentRosterTab schoolId={schoolId} subjects={subjects} />}
+      {activeTab === "students" && <StudentRosterTab schoolId={schoolId} subjects={subjects} onDataChanged={onDataChanged} />}
       {activeTab === "rooms"    && <RoomsTab    schoolId={schoolId} students={students} />}
       {activeTab === "subjects" && <SubjectsTab schoolId={schoolId} />}
     </div>

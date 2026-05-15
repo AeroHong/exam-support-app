@@ -145,7 +145,9 @@ function mergeExamConfig(sessions, subjects, prevConfig) {
 /** 학교지정: 해당 학년 전체 학생 수 / 학생선택: enrollment 기반 */
 function calcAutoCount(subject, students, enrollments) {
   if (subject.category === "학교지정") {
-    return students.filter((s) => String(s.grade) === String(subject.grade)).length;
+    return students.filter(
+      (s) => String(s.grade) === String(subject.grade) && s.examStatus !== "delegation",
+    ).length;
   }
   return enrollments.filter(
     (e) => e.subjectName === subject.name || e.subjectId === subject.id,

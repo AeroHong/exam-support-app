@@ -138,7 +138,7 @@ function buildStudentId(grade, classNo, number) {
   return String(grade) + String(classNo).padStart(2, "0") + String(number).padStart(2, "0");
 }
 
-function normalizeSubjectName(raw) {
+function stripSubjectSuffix(raw) {
   return raw.split("_")[0].trim();
 }
 
@@ -162,7 +162,7 @@ function parseRows(rows) {
       email = String(row[4] ?? "").trim();
       for (let i = 5; i < row.length; i++) {
         const raw = String(row[i] ?? "").trim();
-        if (raw) electiveSubjects.push(normalizeSubjectName(raw));
+        if (raw) electiveSubjects.push(stripSubjectSuffix(raw));
       }
     }
 
@@ -173,11 +173,35 @@ function parseRows(rows) {
 
 // ─── 학생 추가/수정 모달 ──────────────────────────────────────────────────────
 
+const EXAM_STATUS_OPTIONS = [
+  { value: "",           label: "정상 응시" },
+  { value: "delegation", label: "위탁" },
+  { value: "special",    label: "특수학급" },
+  { value: "separate",   label: "별도고사실" },
+];
+
+const EXAM_STATUS_STYLE = {
+  delegation: { backgroundColor: "#fee2e2", color: "#dc2626" },
+  special:    { backgroundColor: "#fef3c7", color: "#b45309" },
+  separate:   { backgroundColor: "#f3e8ff", color: "#7e22ce" },
+};
+
+function ExamStatusBadge({ status }) {
+  if (!status) return null;
+  const opt = EXAM_STATUS_OPTIONS.find((o) => o.value === status);
+  if (!opt) return null;
+  return (
+    <span style={{ fontSize: "0.68rem", fontWeight: 700, borderRadius: "999px", padding: "0.08rem 0.4rem", marginLeft: "0.3rem", ...EXAM_STATUS_STYLE[status] }}>
+      {opt.label}
+    </span>
+  );
+}
+
 function StudentModal({ student, onClose, onSave }) {
   const isEdit = Boolean(student?.id);
   const [form, setForm] = useState(() => student
-    ? { grade: student.grade, classNo: student.classNo, number: student.number, name: student.name, email: student.email, electiveSubjects: [...(student.electiveSubjects ?? [])] }
-    : { grade: 1, classNo: "", number: "", name: "", email: "", electiveSubjects: [] }
+    ? { grade: student.grade, classNo: student.classNo, number: student.number, name: student.name, email: student.email, electiveSubjects: [...(student.electiveSubjects ?? [])], examStatus: student.examStatus ?? "" }
+    : { grade: 1, classNo: "", number: "", name: "", email: "", electiveSubjects: [], examStatus: "" }
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -196,6 +220,7 @@ function StudentModal({ student, onClose, onSave }) {
         grade: Number(form.grade), classNo: Number(form.classNo), number: Number(form.number),
         name: form.name.trim(), email: form.email.trim(),
         electiveSubjects: form.electiveSubjects.filter(s => s.trim()),
+        examStatus: form.examStatus || "",
       });
       onClose();
     } catch (err) {
@@ -235,6 +260,20 @@ function StudentModal({ student, onClose, onSave }) {
               <label style={s.label}>학교계정</label>
               <input style={s.input} type="text" placeholder="student@school.kr" value={form.email} onChange={e => set("email", e.target.value)} />
             </div>
+          </div>
+          <div style={s.formGroup}>
+            <label style={s.label}>응시 형태</label>
+            <select style={s.select} value={form.examStatus} onChange={e => set("examStatus", e.target.value)}>
+              {EXAM_STATUS_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+            {form.examStatus === "delegation" && (
+              <p style={{ fontSize: "0.73rem", color: "#dc2626", marginTop: "0.25rem" }}>위탁 학생은 모든 시험 인원수 계산에서 제외됩니다.</p>
+            )}
+            {(form.examStatus === "special" || form.examStatus === "separate") && (
+              <p style={{ fontSize: "0.73rem", color: "#b45309", marginTop: "0.25rem" }}>별도 응시이나 고사실 응시현황표에 별도 표시됩니다.</p>
+            )}
           </div>
           {Number(form.grade) !== 1 && (
             <div style={s.formGroup}>
@@ -278,7 +317,7 @@ const GRADE_TABS = [
   { key: 3, label: "3학년" },
 ];
 
-export default function StudentRosterTab({ schoolId, subjects = [] }) {
+export default function StudentRosterTab({ schoolId, subjects = [], onDataChanged }) {
   const fileInputRef = useRef(null);
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -416,6 +455,8 @@ export default function StudentRosterTab({ schoolId, subjects = [] }) {
       setNotice({ type: "ok", msg: `${parsedStudents.length}명 저장 완료` });
       setParsedStudents([]); setPreviewRows(null); setUploadOpen(false);
       await fetchStudents();
+      const uploadedGradesStr = [...new Set(parsedStudents.map((s) => String(s.grade)))];
+      onDataChanged?.({ grade: uploadedGradesStr.length === 1 ? uploadedGradesStr[0] : "all", delta: parsedStudents.length, type: "upload" });
     } catch (err) {
       setNotice({ type: "err", msg: "업로드 실패: " + err.message });
     } finally {
@@ -425,15 +466,40 @@ export default function StudentRosterTab({ schoolId, subjects = [] }) {
 
   // ── 개별 CRUD ──
   async function handleSaveStudent(data) {
+    // editTarget이 수정 중인 학생 — await 전에 캡처 (이후 state 변경과 무관)
+    const prevStatus = editTarget?.examStatus ?? "";
+
     await saveStudent(schoolId, data);
-    await fetchStudents();
+
+    // fetchStudents() 대신 로컬 state만 업데이트 → 스크롤 위치 유지
+    setStudents((prev) => {
+      const idx = prev.findIndex((s) => s.id === data.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = data;
+        return next;
+      }
+      return [...prev, data].sort((a, b) => a.id.localeCompare(b.id));
+    });
+
+    // examStatus 변경 시 → 상위에 알려 tenantData 갱신 + 확정 해제
+    if (editTarget && prevStatus !== (data.examStatus ?? "")) {
+      const isDelegationChange =
+        data.examStatus === "delegation" || prevStatus === "delegation";
+      onDataChanged?.({
+        grade: String(data.grade),
+        delta: 0,
+        type: isDelegationChange ? "statusDelegation" : "statusSpecial",
+      });
+    }
   }
 
   async function handleDelete(student) {
-    if (!window.confirm(`"${student.name}" 학생을 삭제하시겠습니까?`)) return;
+    if (!window.confirm(`"${student.name}" 학생을 삭제하시겠습니까?\n해당 학생의 수강 신청 정보도 함께 삭제됩니다.`)) return;
     try {
       await deleteStudent(schoolId, student.id);
       setStudents(prev => prev.filter(s => s.id !== student.id));
+      onDataChanged?.({ grade: String(student.grade), delta: -1, type: "delete" });
     } catch (err) {
       setNotice({ type: "err", msg: "삭제 실패: " + err.message });
     }
@@ -444,12 +510,13 @@ export default function StudentRosterTab({ schoolId, subjects = [] }) {
     const grade = gradeFilter === "all" ? null : gradeFilter;
     const label = grade ? `${grade}학년 전체` : "전체";
     const count = grade ? students.filter(s => s.grade === grade).length : students.length;
-    if (!window.confirm(`${label} 학생 ${count}명을 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) return;
+    if (!window.confirm(`${label} 학생 ${count}명을 삭제하시겠습니까?\n수강 신청 정보도 함께 삭제됩니다.\n이 작업은 되돌릴 수 없습니다.`)) return;
     setLoading(true);
     try {
       await deleteStudentsByGrade(schoolId, grade);
       await fetchStudents();
       setNotice({ type: "ok", msg: `${label} ${count}명 삭제 완료` });
+      onDataChanged?.({ grade: grade ? String(grade) : "all", delta: -count, type: "delete_grade" });
     } catch (err) {
       setNotice({ type: "err", msg: "삭제 실패: " + err.message });
     } finally {
@@ -619,6 +686,7 @@ export default function StudentRosterTab({ schoolId, subjects = [] }) {
             <th style={s.th}>반</th>
             <th style={s.th}>번호</th>
             <th style={s.th}>이름</th>
+            <th style={s.th}>응시 형태</th>
             <th style={s.th}>이메일</th>
             <th style={s.th}>선택과목</th>
             <th style={s.thRight}>
@@ -632,9 +700,9 @@ export default function StudentRosterTab({ schoolId, subjects = [] }) {
         </thead>
         <tbody>
           {loading ? (
-            <tr><td colSpan={7} style={s.emptyRow}>불러오는 중…</td></tr>
+            <tr><td colSpan={8} style={s.emptyRow}>불러오는 중…</td></tr>
           ) : filtered.length === 0 ? (
-            <tr><td colSpan={7} style={s.emptyRow}>
+            <tr><td colSpan={8} style={s.emptyRow}>
               {students.length === 0 ? "등록된 학생이 없습니다. 파일 업로드 또는 학생 추가를 이용하세요." : "해당 학년 학생이 없습니다."}
             </td></tr>
           ) : filtered.map(student => (
@@ -644,7 +712,15 @@ export default function StudentRosterTab({ schoolId, subjects = [] }) {
               <td style={s.td}>{student.grade}</td>
               <td style={s.td}>{student.classNo}</td>
               <td style={s.td}>{student.number}</td>
-              <td style={{ ...s.td, fontWeight: 600 }}>{student.name}</td>
+              <td style={{ ...s.td, fontWeight: 600 }}>
+                {student.name}
+                <ExamStatusBadge status={student.examStatus} />
+              </td>
+              <td style={s.td}>
+                {student.examStatus
+                  ? <ExamStatusBadge status={student.examStatus} />
+                  : <span style={{ color: "#9ca3af", fontSize: "0.75rem" }}>정상</span>}
+              </td>
               <td style={s.tdMuted}>{student.email || "—"}</td>
               <td style={s.tdMuted}>{student.electiveSubjects?.join(", ") || "—"}</td>
               <td style={s.tdRight}>

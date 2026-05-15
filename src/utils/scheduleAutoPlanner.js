@@ -10,12 +10,17 @@
  * 지정과목 → 해당 학년 전체 / 선택과목 → enrollments 기반
  */
 export function buildStudentSets(sessions, students, enrollments) {
+  // 위탁 학생은 시험 전체 제외
+  const activeStudentIds = new Set(
+    students.filter((s) => s.examStatus !== "delegation").map((s) => s.id),
+  );
+
   const sets = {};
   for (const session of sessions) {
     if (session.isRequired) {
       sets[session.id] = new Set(
         students
-          .filter((s) => String(s.grade) === String(session.grade))
+          .filter((s) => String(s.grade) === String(session.grade) && s.examStatus !== "delegation")
           .map((s) => s.id),
       );
     } else {
@@ -28,7 +33,8 @@ export function buildStudentSets(sessions, students, enrollments) {
             if (session.subjectId && e.subjectId) return e.subjectId === session.subjectId;
             return e.subjectName === session.subjectName;
           })
-          .map((e) => e.studentId),
+          .map((e) => e.studentId)
+          .filter((sid) => activeStudentIds.has(sid)),
       );
     }
   }
@@ -289,19 +295,20 @@ export function computeDayStats(sessions, studentSets, dayId, periods, grade) {
     const period = periods[pIdx];
     const testingStudents = periodTestingSets[period.id];
 
-    let waitingCount = 0;
+    const waitingStudentIds = new Set();
     for (const studentId of dayStudents) {
       if (testingStudents.has(studentId)) continue; // 이 교시 시험 있음
       // 이 교시 이후(pIdx+1~)에 시험이 있는지 확인
       const hasLaterExam = periods.slice(pIdx + 1).some(
         (laterPeriod) => periodTestingSets[laterPeriod.id].has(studentId),
       );
-      if (hasLaterExam) waitingCount++;
+      if (hasLaterExam) waitingStudentIds.add(studentId);
     }
 
     periodStats[period.id] = {
       testingCount: testingStudents.size,
-      waitingCount,
+      waitingCount: waitingStudentIds.size,
+      waitingStudentIds,
     };
   }
 
@@ -343,7 +350,7 @@ export function computeDayStats(sessions, studentSets, dayId, periods, grade) {
     }
   }
 
-  return { periodStats, tripleCount, conflicts, dayStudentCount: dayStudents.size };
+  return { periodStats, tripleCount, conflicts, dayStudentCount: dayStudents.size, dayStudentIds: dayStudents };
 }
 
 // ── 배치 결과 평가 ────────────────────────────────────────────────────────────

@@ -28,5 +28,7 @@ export function getDefaultPlan(schoolId) {
     days: [],
     periods: DEFAULT_PERIODS,
     sessions: [],
+    scheduleConfirmed: {},
+    roomConfirmed: {},
   };
 }
