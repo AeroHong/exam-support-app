@@ -16,8 +16,8 @@ import { useTenantData } from "./hooks/useTenantData";
 const PAGES = [
   { key: "data",     label: "기초 데이터" },
   { key: "examplan", label: "시험계획" },
-  { key: "rooms",    label: "고사실 배정" },
   { key: "schedule", label: "일정 배치" },
+  { key: "rooms",    label: "고사실 배정" },
   { key: "overview", label: "개요" },
 ];
 
@@ -110,6 +110,20 @@ function App() {
     });
   };
 
+  // 학년 배치 초기화 — 단일 업데이트 후 Firestore 즉시 저장
+  const resetGradePlacements = (grade) => {
+    const cleared = {
+      ...plan,
+      sessions: plan.sessions.map((s) =>
+        String(s.grade) === String(grade)
+          ? { ...s, dayId: "", periodId: "", dateLabel: "미배치", startTime: "" }
+          : s,
+      ),
+    };
+    planner.setPlan(cleared);
+    planner.savePlan(cleared);
+  };
+
   const addSession = (session) => {
     setSessions((current) => [...current, session]);
   };
@@ -198,7 +212,7 @@ function App() {
       {/* ── 페이지 콘텐츠 ── */}
       <main>
         {activePage === "data" ? (
-          <DataManagementPage schoolId={auth.profile?.schoolId} students={effectiveStudents} />
+          <DataManagementPage schoolId={auth.profile?.schoolId} students={effectiveStudents} subjects={tenantData.subjects ?? []} />
         ) : null}
 
         {activePage === "examplan" ? (
@@ -234,12 +248,29 @@ function App() {
         {activePage === "schedule" ? (
           <ScheduleBoardPage
             days={plan.days}
+            periods={plan.periods}
             sessions={plan.sessions}
             students={effectiveStudents}
             enrollments={effectiveEnrollments}
-            roomWarnings={engine.roomWarnings}
             onMove={handleMove}
             onSessionChange={updateSession}
+            onResetPlacements={resetGradePlacements}
+            onDayChange={(dayId, patch) =>
+              planner.setPlan((cur) => ({
+                ...cur,
+                days: cur.days.map((d) => (d.id === dayId ? { ...d, ...patch } : d)),
+              }))
+            }
+            onSwapDays={(dayIdA, dayIdB, labelA, labelB) =>
+              planner.setPlan((cur) => ({
+                ...cur,
+                sessions: cur.sessions.map((s) => {
+                  if (s.dayId === dayIdA) return { ...s, dayId: dayIdB, dateLabel: labelB ?? "" };
+                  if (s.dayId === dayIdB) return { ...s, dayId: dayIdA, dateLabel: labelA ?? "" };
+                  return s;
+                }),
+              }))
+            }
           />
         ) : null}
 

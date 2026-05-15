@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import {
   bulkSaveEnrollmentsByGrade,
@@ -8,6 +8,62 @@ import {
   loadStudents,
   saveStudent,
 } from "../lib/firestoreData";
+
+// ─── 과목명 fuzzy 매칭 ────────────────────────────────────────────────────────
+
+/** 공백 제거 + 소문자 변환 (띄어쓰기 차이 무시) */
+function normalizeSubjectName(str) {
+  return str.replace(/\s+/g, "").toLowerCase();
+}
+
+/** Levenshtein 편집 거리 */
+function editDistance(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, (_, i) =>
+    Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)),
+  );
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] =
+        a[i - 1] === b[j - 1]
+          ? dp[i - 1][j - 1]
+          : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
+/**
+ * 과목명을 gradeSubjects 목록에서 찾는다.
+ * 반환: { subject, type: 'exact' | 'space' | 'fuzzy' } | null
+ *   exact  — 완전 일치
+ *   space  — 공백 제거 후 일치 (자동 수정)
+ *   fuzzy  — 유사 매칭 40% 이내 편집 거리 (자동 수정)
+ */
+function findMatchingSubject(name, gradeSubjects) {
+  if (!name || !gradeSubjects.length) return null;
+  const normName = normalizeSubjectName(name);
+
+  const exact = gradeSubjects.find((s) => s.name === name);
+  if (exact) return { subject: exact, type: "exact" };
+
+  const spaceMatch = gradeSubjects.find(
+    (s) => normalizeSubjectName(s.name) === normName,
+  );
+  if (spaceMatch) return { subject: spaceMatch, type: "space" };
+
+  let best = null, bestRatio = Infinity;
+  for (const sub of gradeSubjects) {
+    const normSub = normalizeSubjectName(sub.name);
+    const dist = editDistance(normName, normSub);
+    const ratio = dist / Math.max(normName.length, normSub.length, 1);
+    if (ratio < 0.4 && ratio < bestRatio) {
+      bestRatio = ratio;
+      best = { subject: sub, type: "fuzzy" };
+    }
+  }
+  return best;
+}
 
 // ─── 스타일 ──────────────────────────────────────────────────────────────────
 
@@ -54,6 +110,15 @@ const s = {
   notice:      { padding: "0.6rem 1rem", borderRadius: "7px", fontSize: "0.82rem", fontWeight: 600, marginBottom: "0.75rem" },
   noticeOk:    { backgroundColor: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0" },
   noticeErr:   { backgroundColor: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca" },
+
+  matchPanel:  { marginTop: "1rem", border: "1px solid #e5e7eb", borderRadius: "8px", overflow: "hidden", fontSize: "0.8rem" },
+  matchHeader: { padding: "0.4rem 0.75rem", fontWeight: 700, fontSize: "0.75rem", color: "#374151", backgroundColor: "#f9fafb", borderBottom: "1px solid #e5e7eb" },
+  matchRow:    { display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.25rem 0.75rem", borderBottom: "1px solid #f3f4f6" },
+  matchOk:     { color: "#15803d" },
+  matchFix:    { color: "#92400e" },
+  matchErr:    { color: "#dc2626" },
+  matchArrow:  { color: "#9ca3af", fontSize: "0.75rem" },
+  matchTag:    (color) => ({ fontSize: "0.68rem", fontWeight: 700, padding: "0.05rem 0.35rem", borderRadius: "3px", backgroundColor: color + "22", color }),
 
   modalBackdrop: { position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 },
   modalShell:    { backgroundColor: "#fff", borderRadius: "12px", padding: "1.5rem", width: "min(520px, 95vw)", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.15)" },
@@ -213,7 +278,7 @@ const GRADE_TABS = [
   { key: 3, label: "3학년" },
 ];
 
-export default function StudentRosterTab({ schoolId }) {
+export default function StudentRosterTab({ schoolId, subjects = [] }) {
   const fileInputRef = useRef(null);
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -225,6 +290,46 @@ export default function StudentRosterTab({ schoolId }) {
   const [previewRows, setPreviewRows] = useState(null);
   const [parseError, setParseError] = useState("");
   const [uploading, setUploading] = useState(false);
+
+  // ── 과목명 매칭 검증 ──────────────────────────────────────────────────────
+  const subjectMatchResult = useMemo(() => {
+    if (!parsedStudents.length) return null;
+    if (!subjects.length) return { noSubjects: true };
+
+    const gradeSubjectMap = {};
+    subjects.forEach((sub) => {
+      const g = String(sub.grade);
+      gradeSubjectMap[g] ??= [];
+      gradeSubjectMap[g].push(sub);
+    });
+
+    const matched = [], autoFixed = [], unmatched = [];
+    const seen = new Set();
+
+    for (const student of parsedStudents) {
+      if (student.grade === 1) continue;
+      const g = String(student.grade);
+      const gradeSubjects = gradeSubjectMap[g] ?? [];
+
+      for (const name of (student.electiveSubjects ?? [])) {
+        if (!name) continue;
+        const key = `${g}:${name}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+
+        const m = findMatchingSubject(name, gradeSubjects);
+        if (!m) {
+          unmatched.push({ name, grade: student.grade });
+        } else if (m.type === "exact") {
+          matched.push({ name, grade: student.grade });
+        } else {
+          autoFixed.push({ from: name, to: m.subject.name, grade: student.grade, type: m.type });
+        }
+      }
+    }
+
+    return { matched, autoFixed, unmatched };
+  }, [parsedStudents, subjects]);
   const [notice, setNotice] = useState(null); // { type: 'ok'|'err', msg }
 
   useEffect(() => { if (schoolId) fetchStudents(); }, [schoolId]);
@@ -284,9 +389,23 @@ export default function StudentRosterTab({ schoolId }) {
         if (grade === 1) continue; // 1학년은 선택과목 없음
         const gradeStudents = parsedStudents.filter((s) => s.grade === grade);
         const enrollments = [];
+        // fuzzy 매칭으로 subjectId 연결 + 과목명 자동 수정
+        const gradeSubjects = subjects.filter((sub) => String(sub.grade) === String(grade));
+
         gradeStudents.forEach((student) => {
           (student.electiveSubjects ?? []).forEach((subjectName) => {
-            if (subjectName) {
+            if (!subjectName) return;
+            const m = findMatchingSubject(subjectName, gradeSubjects);
+            if (m) {
+              // 매칭 성공 — 정규화된 과목명 + subjectId 사용
+              enrollments.push({
+                studentId: student.id,
+                subjectName: m.subject.name,
+                subjectId: m.subject.id,
+                grade,
+              });
+            } else {
+              // 미매칭 — 원본 이름으로 저장 (conflict 감지에서 제외됨)
               enrollments.push({ studentId: student.id, subjectName, grade });
             }
           });
@@ -420,6 +539,57 @@ export default function StudentRosterTab({ schoolId }) {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* ── 과목 매칭 결과 ── */}
+          {subjectMatchResult && (
+            <div style={s.matchPanel}>
+              <div style={s.matchHeader}>
+                선택과목 매칭 결과
+                {subjectMatchResult.noSubjects && (
+                  <span style={{ color: "#92400e", marginLeft: "0.5rem" }}>
+                    ⚠ 과목 DB 없음 — 과목 탭에서 과목을 먼저 등록하세요
+                  </span>
+                )}
+              </div>
+
+              {!subjectMatchResult.noSubjects && (
+                <>
+                  {/* 정확 매칭 요약 */}
+                  <div style={{ ...s.matchRow, ...s.matchOk }}>
+                    ✓ 정확 매칭 {subjectMatchResult.matched.length}개
+                  </div>
+
+                  {/* 자동 수정된 항목 */}
+                  {subjectMatchResult.autoFixed.map((item, i) => (
+                    <div key={i} style={{ ...s.matchRow, ...s.matchFix }}>
+                      <span style={s.matchTag("#92400e")}>
+                        {item.type === "space" ? "공백" : "유사"}
+                      </span>
+                      <span>{item.grade}학년</span>
+                      <span style={{ fontWeight: 700 }}>&ldquo;{item.from}&rdquo;</span>
+                      <span style={s.matchArrow}>→</span>
+                      <span style={{ fontWeight: 700 }}>&ldquo;{item.to}&rdquo;</span>
+                      <span style={{ color: "#9ca3af", fontSize: "0.72rem" }}>자동 수정</span>
+                    </div>
+                  ))}
+
+                  {/* 미매칭 항목 */}
+                  {subjectMatchResult.unmatched.map((item, i) => (
+                    <div key={i} style={{ ...s.matchRow, ...s.matchErr }}>
+                      <span style={s.matchTag("#dc2626")}>미매칭</span>
+                      <span>{item.grade}학년</span>
+                      <span style={{ fontWeight: 700 }}>&ldquo;{item.name}&rdquo;</span>
+                      <span style={{ color: "#9ca3af", fontSize: "0.72rem" }}>과목 DB에 없음 — enrollment 저장 안 됨</span>
+                    </div>
+                  ))}
+
+                  {subjectMatchResult.autoFixed.length === 0 && subjectMatchResult.unmatched.length === 0 && (
+                    <div style={{ ...s.matchRow, color: "#9ca3af" }}>모든 과목 정확 매칭됨</div>
+                  )}
+                </>
+              )}
             </div>
           )}
         </div>

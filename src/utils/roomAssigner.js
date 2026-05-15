@@ -21,8 +21,7 @@ const isExtraRoom  = (r) => r.roomType === "extra";
  */
 function getGradeClassRooms(rooms, grade) {
   return rooms
-    .filter(isClassRoom)
-    .filter((r) => r.name.startsWith(`${grade}-`))
+    .filter((r) => isClassRoom(r) && r.name.startsWith(`${grade}-`))
     .sort((a, b) => a.name.localeCompare(b.name, "ko"));
 }
 
@@ -65,17 +64,14 @@ function tryConsolidate(assignedRooms, remaining, extraRooms, usedRoomIds) {
     return null; // 통합 조건 미충족
   }
 
-  // 이전 가득 찬 방의 인원 + 마지막 소수 인원 = 통합 필요 용량
-  const lastFull = assignedRooms[assignedRooms.length - 1];
-  const neededCapacity = lastFull.capacity + remaining;
+  const lastRoom = assignedRooms[assignedRooms.length - 1];
+  const neededCapacity = lastRoom.capacity + remaining;
 
-  // 사용 가능한 추가 고사실 중 용량 충족하는 것 찾기
   const candidate = extraRooms.find(
     (r) => r.capacity >= neededCapacity && !usedRoomIds.has(r.id),
   );
   if (!candidate) return null;
 
-  // 마지막 꽉 찬 방 제거 → 추가 고사실로 대체
   const newRooms = [...assignedRooms.slice(0, -1), candidate];
   return newRooms;
 }
@@ -209,18 +205,18 @@ export function autoAssignAllRooms(sessions, rooms, students, enrollments) {
         roomIds.forEach((id) => usedRoomIds.add(id));
         pointer = nextPointer;
       }
+    }
 
-      // 일정 미배치 선택과목 (dayId/periodId 없음) — 단독 처리
-      const unscheduled = gradeSessions.filter(
-        (s) => !s.isRequired && (!s.dayId || !s.periodId),
+    // 일정 미배치 선택과목 (dayId/periodId 없음) — 단독 처리 (교시 루프 밖에서 1회만)
+    const unscheduled = gradeSessions.filter(
+      (s) => !s.isRequired && (!s.dayId || !s.periodId),
+    );
+    for (const session of unscheduled) {
+      const enrolled = getEnrolledStudents(session, students, enrollments);
+      const { roomIds } = assignElective(
+        session, gradeClassRooms, extraRooms, new Set(), 0, enrolled,
       );
-      for (const session of unscheduled) {
-        const enrolled = getEnrolledStudents(session, students, enrollments);
-        const { roomIds } = assignElective(
-          session, gradeClassRooms, extraRooms, new Set(), 0, enrolled,
-        );
-        result[session.id] = roomIds;
-      }
+      result[session.id] = roomIds;
     }
   }
 

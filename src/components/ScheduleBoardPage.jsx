@@ -1,306 +1,536 @@
-import { Fragment } from "react";
-import { addMinutes, buildTimeSlots } from "../utils/timeUtils";
+import { useMemo, useState } from "react";
+import { addMinutes } from "../utils/timeUtils";
+import {
+  STRATEGIES,
+  autoPlace,
+  buildConflictGraph,
+  buildStudentSets,
+  computeDayStats,
+  evaluatePlacement,
+  isSlotValid,
+} from "../utils/scheduleAutoPlanner";
 
-const gradeOptions = ["1", "2", "3"];
-const periodConfigs = [
-  { id: "period-1", label: "1교시", defaultStart: "08:30", start: "08:00", end: "10:00" },
-  { id: "period-2", label: "2교시", defaultStart: "10:10", start: "09:30", end: "12:00" },
-  { id: "period-3", label: "3교시", defaultStart: "11:30", start: "11:00", end: "14:00" },
-];
+// ── 스타일 ───────────────────────────────────────────────────────────────────
 
-function buildSubjectStudentMap({ students, enrollments, sessions }) {
-  const studentMap = Object.fromEntries(students.map((student) => [student.id, student]));
-  const sessionMap = Object.fromEntries(sessions.map((session) => [session.subjectId, session]));
+const s = {
+  page:        { display: "flex", flexDirection: "column", height: "calc(100vh - 112px)", overflow: "hidden" },
 
-  return enrollments.reduce((acc, enrollment) => {
-    const student = studentMap[enrollment.studentId];
-    const session = sessionMap[enrollment.subjectId];
+  // 상단 컨트롤 바
+  topBar:      { display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.55rem 1.5rem", backgroundColor: "#fff", borderBottom: "1px solid #e5e7eb", flexShrink: 0, flexWrap: "wrap" },
+  pageTitle:   { fontSize: "1rem", fontWeight: 800, color: "#111827", margin: 0, marginRight: "0.25rem" },
+  tab:         { padding: "0.3rem 0.9rem", border: "1px solid #e5e7eb", borderRadius: "999px", cursor: "pointer", fontSize: "0.82rem", backgroundColor: "#fff", color: "#6b7280" },
+  tabActive:   { padding: "0.3rem 0.9rem", border: "1px solid #4f46e5", borderRadius: "999px", cursor: "pointer", fontSize: "0.82rem", backgroundColor: "#eef2ff", color: "#4f46e5", fontWeight: 700 },
+  badge:       { fontSize: "0.68rem", fontWeight: 600, backgroundColor: "#e5e7eb", color: "#374151", borderRadius: "999px", padding: "0.05rem 0.4rem", marginLeft: "0.25rem" },
+  badgeBlue:   { fontSize: "0.68rem", fontWeight: 600, backgroundColor: "#c7d2fe", color: "#3730a3", borderRadius: "999px", padding: "0.05rem 0.4rem", marginLeft: "0.25rem" },
+  sep:         { width: "1px", height: "20px", backgroundColor: "#e5e7eb", flexShrink: 0 },
+  primaryBtn:  { padding: "0.38rem 0.9rem", backgroundColor: "#4f46e5", color: "#fff", border: "none", borderRadius: "7px", cursor: "pointer", fontSize: "0.8rem", fontWeight: 600, flexShrink: 0 },
+  outlineBtn:  { padding: "0.38rem 0.85rem", backgroundColor: "#fff", color: "#374151", border: "1px solid #d1d5db", borderRadius: "7px", cursor: "pointer", fontSize: "0.8rem", flexShrink: 0 },
+  dangerBtn:   { padding: "0.38rem 0.85rem", backgroundColor: "#fff", color: "#dc2626", border: "1px solid #fecaca", borderRadius: "7px", cursor: "pointer", fontSize: "0.8rem", flexShrink: 0 },
 
-    if (!student || !session || student.grade !== session.grade) {
-      return acc;
-    }
+  // 메인 레이아웃
+  body:        { display: "flex", flex: 1, overflow: "hidden" },
 
-    acc[enrollment.subjectId] ??= new Set();
-    acc[enrollment.subjectId].add(enrollment.studentId);
-    return acc;
-  }, {});
-}
+  // 팔레트 (왼쪽)
+  palette:     { width: "210px", flexShrink: 0, borderRight: "1px solid #e5e7eb", backgroundColor: "#f9fafb", display: "flex", flexDirection: "column", overflow: "hidden" },
+  palHeader:   { padding: "0.55rem 0.75rem", borderBottom: "1px solid #e5e7eb", fontSize: "0.7rem", fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.05em" },
+  palBody:     { flex: 1, overflowY: "auto", padding: "0.45rem" },
+  palDropZone: { padding: "0.4rem 0.5rem", borderTop: "1px solid #e5e7eb", fontSize: "0.7rem", color: "#9ca3af", textAlign: "center", minHeight: "32px" },
 
-function hasOverlap(setA = new Set(), setB = new Set()) {
-  for (const value of setA) {
-    if (setB.has(value)) {
-      return true;
-    }
-  }
-  return false;
-}
+  // 보드 (오른쪽)
+  boardWrap:   { flex: 1, overflow: "auto", padding: "0.75rem 1rem", display: "flex", flexDirection: "column", gap: "1rem" },
 
-function getAllowedStartTimes(period, duration) {
-  return buildTimeSlots(period.start, period.end, 5).filter((time) => {
-    const endTime = addMinutes(time, duration);
-    return endTime <= period.end;
-  });
-}
+  // 그리드
+  grid:        (nDays) => ({
+    display: "grid",
+    gridTemplateColumns: `58px repeat(${nDays}, minmax(140px, 1fr))`,
+    gap: "3px",
+    minWidth: `${58 + nDays * 140}px`,
+  }),
+  cornerCell:  {},
+  dayHeader:   { padding: "0.35rem 0.5rem", backgroundColor: "#f3f4f6", borderRadius: "6px", textAlign: "center", position: "relative" },
+  dayLabelRow: { display: "flex", alignItems: "center", justifyContent: "center", gap: "0.25rem" },
+  dayLabel:    { fontSize: "0.78rem", fontWeight: 700, color: "#374151" },
+  dayEditBtn:  { fontSize: "0.6rem", color: "#9ca3af", background: "none", border: "none", cursor: "pointer", padding: "1px 3px" },
+  dayInput:    { fontSize: "0.75rem", fontWeight: 700, color: "#374151", border: "1px solid #4f46e5", borderRadius: "4px", padding: "0.1rem 0.3rem", width: "100%", textAlign: "center" },
+  tripleWarn:  { fontSize: "0.65rem", color: "#dc2626", fontWeight: 600, marginTop: "0.1rem" },
+  periodLabel: { display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.72rem", fontWeight: 700, color: "#6b7280", padding: "0.2rem" },
 
-function ScheduleBoardPage({
-  days,
-  sessions,
-  students,
-  enrollments,
-  roomWarnings,
-  onMove,
-  onSessionChange,
+  // 셀
+  cell:        (isOver, isValid) => ({
+    minHeight: "80px",
+    border: `1.5px dashed ${isOver ? (isValid ? "#4f46e5" : "#dc2626") : "#d1d5db"}`,
+    borderRadius: "8px",
+    backgroundColor: isOver ? (isValid ? "#eef2ff" : "#fef2f2") : "#fff",
+    padding: "0.3rem",
+    display: "flex",
+    flexDirection: "column",
+    gap: "0.2rem",
+    transition: "background-color 0.1s, border-color 0.1s",
+  }),
+  cellStat:    { fontSize: "0.63rem", color: "#9ca3af", marginTop: "auto", paddingTop: "0.2rem" },
+  cellWait:    { fontSize: "0.63rem", color: "#92400e", fontWeight: 600 },
+
+  // 요약 행 (시험 없는 학생)
+  summaryRow:  { display: "contents" },
+  summaryCorner: { display: "flex", alignItems: "center", justifyContent: "center" },
+  summaryCell: { padding: "0.25rem 0.4rem", borderTop: "1px solid #e5e7eb", textAlign: "center" },
+  noExamBig:   { fontSize: "0.75rem", fontWeight: 700, color: "#374151" },
+  noExamLabel: { fontSize: "0.62rem", color: "#9ca3af" },
+
+  // 세션 카드 — 팔레트
+  palCard:     (isDragging) => ({
+    padding: "0.38rem 0.45rem",
+    backgroundColor: isDragging ? "#e0e7ff" : "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: "7px",
+    cursor: "grab",
+    marginBottom: "0.28rem",
+    opacity: isDragging ? 0.5 : 1,
+  }),
+  palCardName: { fontSize: "0.78rem", fontWeight: 700, color: "#111827", margin: 0 },
+  palCardMeta: { fontSize: "0.68rem", color: "#6b7280", marginTop: "0.08rem" },
+
+  // 세션 카드 — 보드 내
+  boardCard:   (isConflict) => ({
+    padding: "0.28rem 0.35rem",
+    backgroundColor: isConflict ? "#fef2f2" : "#eef2ff",
+    border: `1px solid ${isConflict ? "#fca5a5" : "#c7d2fe"}`,
+    borderRadius: "6px",
+    cursor: "grab",
+    position: "relative",
+  }),
+  boardCardName: { fontSize: "0.72rem", fontWeight: 700, color: "#1e1b4b", margin: 0, paddingRight: "13px" },
+  boardCardMeta: { fontSize: "0.62rem", color: "#6b7280" },
+  removeBtn:   { position: "absolute", top: "2px", right: "2px", fontSize: "0.6rem", color: "#9ca3af", cursor: "pointer", lineHeight: 1, border: "none", background: "none", padding: "1px 2px" },
+  conflictDot: { display: "inline-block", width: "5px", height: "5px", borderRadius: "50%", backgroundColor: "#dc2626", marginRight: "3px", verticalAlign: "middle" },
+
+  badgeReq:    { fontSize: "0.58rem", fontWeight: 700, backgroundColor: "#dbeafe", color: "#1d4ed8", borderRadius: "3px", padding: "0 0.28rem", marginRight: "2px" },
+  badgeEssay:  { fontSize: "0.58rem", fontWeight: 700, backgroundColor: "#fef9c3", color: "#713f12", borderRadius: "3px", padding: "0 0.28rem" },
+
+  // 자동 배치 미리보기 패널
+  previewPanel: { border: "1px solid #e5e7eb", borderRadius: "10px", backgroundColor: "#f9fafb", padding: "0.75rem 1rem", flexShrink: 0 },
+  previewTitle: { fontSize: "0.8rem", fontWeight: 700, color: "#374151", marginBottom: "0.6rem", display: "flex", alignItems: "center", gap: "0.5rem" },
+  previewCards: { display: "flex", gap: "0.75rem" },
+  previewCard:  (isApplied) => ({
+    flex: 1,
+    border: `1.5px solid ${isApplied ? "#4f46e5" : "#e5e7eb"}`,
+    borderRadius: "8px",
+    padding: "0.65rem 0.75rem",
+    backgroundColor: isApplied ? "#eef2ff" : "#fff",
+  }),
+  previewLabel: { fontSize: "0.8rem", fontWeight: 700, color: "#111827", marginBottom: "0.3rem" },
+  previewDesc:  { fontSize: "0.68rem", color: "#6b7280", marginBottom: "0.5rem" },
+  previewStat:  { display: "flex", flexDirection: "column", gap: "0.2rem", marginBottom: "0.5rem" },
+  previewRow:   { display: "flex", justifyContent: "space-between", fontSize: "0.72rem" },
+  previewKey:   { color: "#6b7280" },
+  previewVal:   (warn) => ({ fontWeight: 700, color: warn ? "#dc2626" : "#111827" }),
+  applyBtn:     { width: "100%", padding: "0.3rem", backgroundColor: "#4f46e5", color: "#fff", border: "none", borderRadius: "6px", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600 },
+
+  emptyBoard:  { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", color: "#9ca3af", fontSize: "0.9rem", gap: "0.5rem" },
+};
+
+// ── 메인 컴포넌트 ─────────────────────────────────────────────────────────────
+
+export default function ScheduleBoardPage({
+  days, periods, sessions, students, enrollments,
+  onMove, onSessionChange, onDayChange, onSwapDays, onResetPlacements,
 }) {
-  const warningBySessionId = Object.fromEntries(
-    roomWarnings.map((warning) => [warning.sessionId, warning]),
+  const [gradeFilter, setGradeFilter] = useState("1");
+  const [dragId, setDragId]           = useState(null);        // 세션 드래그
+  const [dragOver, setDragOver]       = useState(null);        // "dayId__periodId"
+  const [dayDragId, setDayDragId]     = useState(null);        // 요일 드래그
+  const [dayDragOver, setDayDragOver] = useState(null);        // dayId (hover)
+  const [editingDayId, setEditingDayId] = useState(null);      // 요일 텍스트 편집
+  const [editingLabel, setEditingLabel] = useState("");
+  const [previews, setPreviews]       = useState(null);        // 자동배치 미리보기
+
+  // 현재 학년 세션
+  const gradeSessions = useMemo(
+    () => sessions.filter((s) => String(s.grade) === gradeFilter),
+    [sessions, gradeFilter],
   );
-  const subjectStudentMap = buildSubjectStudentMap({ students, enrollments, sessions });
 
-  const getCompatibleSessions = ({ dayId, periodId, grade, excludeSessionIds }) => {
-    const placedSessions = sessions.filter(
-      (session) =>
-        session.dayId === dayId &&
-        session.periodId === periodId &&
-        session.grade === grade &&
-        !excludeSessionIds.includes(session.id),
-    );
-    const placedSubjectIds = placedSessions.map((session) => session.subjectId);
+  // 학생 집합 & Conflict Graph
+  const studentSets = useMemo(
+    () => buildStudentSets(gradeSessions, students, enrollments),
+    [gradeSessions, students, enrollments],
+  );
+  const { conflictGraph } = useMemo(
+    () => buildConflictGraph(gradeSessions, studentSets),
+    [gradeSessions, studentSets],
+  );
 
-    return sessions.filter((candidate) => {
-      if (candidate.grade !== grade || excludeSessionIds.includes(candidate.id)) {
-        return false;
-      }
+  // 미배치 세션
+  const unplaced = useMemo(
+    () => gradeSessions.filter((s) => !s.dayId || !s.periodId),
+    [gradeSessions],
+  );
 
-      if (candidate.dayId === dayId && candidate.periodId === periodId) {
-        return false;
-      }
+  // 날짜별 통계
+  const dayStatsMap = useMemo(() => {
+    const map = {};
+    for (const day of days) {
+      map[day.id] = computeDayStats(sessions, studentSets, day.id, periods, gradeFilter);
+    }
+    return map;
+  }, [sessions, studentSets, days, periods, gradeFilter]);
 
-      if (placedSubjectIds.length === 0) {
-        return false;
-      }
+  // 전체 학년 학생 수 (feature 2용)
+  const totalGradeStudents = useMemo(
+    () => students.filter((s) => String(s.grade) === gradeFilter).length,
+    [students, gradeFilter],
+  );
 
-      const candidateStudents = subjectStudentMap[candidate.subjectId] ?? new Set();
-      return placedSessions.every((session) => {
-        const placedStudents = subjectStudentMap[session.subjectId] ?? new Set();
-        return !hasOverlap(candidateStudents, placedStudents);
-      });
+  // 드래그 대상이 슬롯에 drop 가능한지
+  const dragSession = dragId ? sessions.find((s) => s.id === dragId) : null;
+  function canDrop(dayId, periodId) {
+    if (!dragSession) return true;
+    const placementSoFar = sessions
+      .filter((s) => s.dayId && s.periodId)
+      .map((s) => ({ sessionId: s.id, dayId: s.dayId, periodId: s.periodId }));
+    return isSlotValid(dragSession.id, dayId, periodId, placementSoFar, conflictGraph);
+  }
+
+  // ── 이벤트 핸들러 ──────────────────────────────────────────────────────────
+
+  function handleDrop(dayId, periodId) {
+    if (!dragId) return;
+    const session = sessions.find((s) => s.id === dragId);
+    const day     = days.find((d) => d.id === dayId);
+    const period  = periods.find((p) => p.id === periodId);
+    const startTime = period?.startTimes?.[gradeFilter] ?? "08:30";
+    onMove(dragId, { dayId, periodId, grade: gradeFilter, startTime, duration: session?.duration, dateLabel: day?.label ?? "" });
+    setDragId(null);
+    setDragOver(null);
+  }
+
+  function handleDropToPalette() {
+    if (!dragId) return;
+    onSessionChange(dragId, { dayId: "", periodId: "", dateLabel: "미배치", startTime: "" });
+    setDragId(null);
+    setDragOver(null);
+  }
+
+  function applyResult(result) {
+    for (const [sessionId, { dayId, periodId }] of Object.entries(result)) {
+      const session = sessions.find((s) => s.id === sessionId);
+      const day     = days.find((d) => d.id === dayId);
+      const period  = periods.find((p) => p.id === periodId);
+      const startTime = period?.startTimes?.[gradeFilter] ?? "08:30";
+      onMove(sessionId, { dayId, periodId, grade: gradeFilter, startTime, duration: session?.duration, dateLabel: day?.label ?? "" });
+    }
+    setPreviews(null);
+  }
+
+  // feature 3: 3가지 전략 미리보기 생성
+  function handlePreview() {
+    const options = Object.entries(STRATEGIES).map(([key, weights]) => {
+      // gradeSessions 전체 전달 → 기배치 세션도 conflict graph에 포함
+      const result  = autoPlace(gradeSessions, days, periods, students, enrollments, weights);
+      const metrics = evaluatePlacement(result, sessions, studentSets, days, periods, gradeFilter);
+      return { key, label: weights.label, desc: weights.desc, result, metrics };
     });
-  };
+    setPreviews(options);
+  }
 
-  return (
-    <section className="panel">
-      <div className="section-head">
-        <div>
-          <p className="eyebrow">일정 배치</p>
-          <h2>교시 기반 배치 보드</h2>
+  // 요일 드래그: 두 날짜의 모든 세션 교체
+  function handleDayDrop(targetDayId) {
+    if (!dayDragId || dayDragId === targetDayId) { setDayDragId(null); setDayDragOver(null); return; }
+    const srcDay = days.find((d) => d.id === dayDragId);
+    const tgtDay = days.find((d) => d.id === targetDayId);
+    if (onSwapDays) onSwapDays(dayDragId, targetDayId, srcDay?.label, tgtDay?.label);
+    setDayDragId(null);
+    setDayDragOver(null);
+  }
+
+  // feature 1: 요일 라벨 저장
+  function saveDayLabel(dayId) {
+    if (onDayChange && editingLabel.trim()) {
+      onDayChange(dayId, { label: editingLabel.trim() });
+    }
+    setEditingDayId(null);
+    setEditingLabel("");
+  }
+
+  // 학년 탭 뱃지
+  function gradeTabInfo(g) {
+    const gs = sessions.filter((s) => String(s.grade) === g);
+    return { total: gs.length, placed: gs.filter((s) => s.dayId && s.periodId).length };
+  }
+
+  if (!days.length || !periods.length) {
+    return (
+      <div style={s.page}>
+        <div style={s.emptyBoard}>
+          <span>고사 기간 또는 교시가 설정되지 않았습니다.</span>
+          <span style={{ fontSize: "0.8rem" }}>시험계획 탭에서 날짜와 교시를 먼저 설정해주세요.</span>
         </div>
       </div>
+    );
+  }
 
-      <p className="page-copy">
-        과목 카드를 날짜와 교시에 먼저 배치하고, 배치된 카드 안에서 시작 시간을 직접
-        선택합니다. 종료 시간은 시험 시간에 따라 자동 계산됩니다.
-      </p>
+  return (
+    <div style={s.page}>
+      {/* ── 상단 컨트롤 바 ── */}
+      <div style={s.topBar}>
+        <span style={s.pageTitle}>일정 배치</span>
+        <div style={{ display: "flex", gap: "0.3rem" }}>
+          {["1", "2", "3"].map((g) => {
+            const { total, placed } = gradeTabInfo(g);
+            const active = gradeFilter === g;
+            return (
+              <button key={g} style={active ? s.tabActive : s.tab}
+                onClick={() => { setGradeFilter(g); setDragId(null); setPreviews(null); }}
+              >
+                {g}학년<span style={active ? s.badgeBlue : s.badge}>{placed}/{total}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div style={s.sep} />
+        <button style={s.primaryBtn} onClick={handlePreview} disabled={unplaced.length === 0}>
+          자동 배치 미리보기 ({unplaced.length}개)
+        </button>
+        {previews && (
+          <button style={s.outlineBtn} onClick={() => setPreviews(null)}>미리보기 닫기</button>
+        )}
+        <button style={s.dangerBtn}
+          onClick={() => {
+            if (!window.confirm(`${gradeFilter}학년 배치를 모두 초기화하시겠습니까?\n초기화 후 즉시 저장됩니다.`)) return;
+            onResetPlacements?.(gradeFilter);
+            setPreviews(null);
+          }}
+        >
+          전체 초기화
+        </button>
+      </div>
 
-      <div className="schedule-layout period-layout">
-        <aside className="schedule-palette">
-          <div className="section-head">
-            <div>
-              <p className="eyebrow">대기 카드</p>
-              <h3>전체 시험 카드</h3>
-            </div>
+      {/* ── 메인 레이아웃 ── */}
+      <div style={s.body}>
+        {/* ── 팔레트 ── */}
+        <div style={s.palette}>
+          <div style={s.palHeader}>미배치 {unplaced.length > 0 ? `(${unplaced.length})` : ""}</div>
+          <div style={s.palBody} onDragOver={(e) => e.preventDefault()} onDrop={handleDropToPalette}>
+            {unplaced.length === 0 ? (
+              <div style={{ fontSize: "0.73rem", color: "#9ca3af", textAlign: "center", padding: "1rem 0" }}>모두 배치 완료</div>
+            ) : (
+              unplaced.map((session) => (
+                <SessionCard key={session.id} session={session} variant="palette"
+                  isDragging={dragId === session.id}
+                  onDragStart={() => setDragId(session.id)}
+                  onDragEnd={() => setDragId(null)}
+                />
+              ))
+            )}
           </div>
-          <div className="stack-grid">
-            {gradeOptions.map((grade) => {
-              const gradeSessions = sessions.filter((session) => session.grade === grade);
+          <div style={s.palDropZone}>{dragId ? "여기로 → 미배치 복귀" : ""}</div>
+        </div>
+
+        {/* ── 보드 영역 ── */}
+        <div style={s.boardWrap}>
+          {/* 그리드 */}
+          <div style={s.grid(days.length)}>
+            {/* 헤더 행 */}
+            <div style={s.cornerCell} />
+            {days.map((day) => {
+              const dStats      = dayStatsMap[day.id];
+              const dayEmpty    = !gradeSessions.some((s) => s.dayId === day.id);
+              const isEditing   = editingDayId === day.id;
+              const isDayDragging = dayDragId === day.id;
+              const isDayOver   = dayDragOver === day.id && dayDragId && dayDragId !== day.id;
 
               return (
-                <div key={`palette:${grade}`} className="palette-group">
-                  <p className="eyebrow">{grade}학년</p>
-                  <div className="mini-card-list">
-                    {gradeSessions.map((session) => (
-                      <button
-                        key={session.id}
-                        type="button"
-                        draggable
-                        className={`mini-exam-card ${warningBySessionId[session.id] ? "warning" : ""}`}
-                        onDragStart={(event) => {
-                          event.dataTransfer.setData("text/plain", session.id);
-                        }}
-                      >
-                        <strong>{session.subjectName || "과목명 미입력"}</strong>
-                        <span>{session.duration}분 · {session.studentCount}명</span>
-                        <span>
-                          {session.dayId && session.periodId
-                            ? `${session.dateLabel} ${periodConfigs.find((period) => period.id === session.periodId)?.label ?? ""}`
-                            : "미배치"}
-                        </span>
-                      </button>
-                    ))}
+                <div
+                  key={day.id}
+                  draggable={!isEditing}
+                  style={{
+                    ...s.dayHeader,
+                    cursor: isDayDragging ? "grabbing" : "grab",
+                    opacity: isDayDragging ? 0.5 : 1,
+                    ...(isDayOver
+                      ? { border: "2px solid #4f46e5", backgroundColor: "#eef2ff" }
+                      : dayEmpty
+                      ? { border: "1.5px solid #fca5a5", backgroundColor: "#fef2f2" }
+                      : {}),
+                  }}
+                  onDragStart={(e) => { e.stopPropagation(); setDayDragId(day.id); setDragId(null); }}
+                  onDragEnd={() => { setDayDragId(null); setDayDragOver(null); }}
+                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); if (dayDragId && dayDragId !== day.id) setDayDragOver(day.id); }}
+                  onDragLeave={() => setDayDragOver(null)}
+                  onDrop={(e) => { e.stopPropagation(); handleDayDrop(day.id); }}
+                >
+                  {isEditing ? (
+                    <input
+                      autoFocus
+                      style={s.dayInput}
+                      value={editingLabel}
+                      onChange={(e) => setEditingLabel(e.target.value)}
+                      onBlur={() => saveDayLabel(day.id)}
+                      onKeyDown={(e) => { if (e.key === "Enter") saveDayLabel(day.id); if (e.key === "Escape") setEditingDayId(null); }}
+                    />
+                  ) : (
+                    <div style={s.dayLabelRow}>
+                      <span style={s.dayLabel}>{day.label}</span>
+                      {onDayChange && (
+                        <button style={s.dayEditBtn} title="날짜 텍스트 수정"
+                          onMouseDown={(e) => e.stopPropagation()}
+                          onClick={(e) => { e.stopPropagation(); setEditingDayId(day.id); setEditingLabel(day.label); }}
+                        >✎</button>
+                      )}
+                    </div>
+                  )}
+                  {isDayOver && <div style={{ fontSize: "0.65rem", color: "#4f46e5", fontWeight: 600, marginTop: "0.1rem" }}>여기로 이동</div>}
+                  {!isDayOver && dayEmpty && <div style={{ fontSize: "0.65rem", color: "#dc2626", fontWeight: 600, marginTop: "0.1rem" }}>과목 없음</div>}
+                  {!isDayOver && !dayEmpty && dStats?.tripleCount > 0 && (
+                    <div style={s.tripleWarn}>3연속 {dStats.tripleCount}명</div>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* 교시 행 */}
+            {periods.map((period) => (
+              <>
+                <div key={`lbl-${period.id}`} style={s.periodLabel}>{period.label}</div>
+                {days.map((day) => {
+                  const slotKey      = `${day.id}__${period.id}`;
+                  const isOver       = dragOver === slotKey;
+                  const valid        = canDrop(day.id, period.id);
+                  const cellSessions = gradeSessions.filter((s) => s.dayId === day.id && s.periodId === period.id);
+                  const dStats       = dayStatsMap[day.id];
+                  const pStat        = dStats?.periodStats?.[period.id];
+                  const conflictsInSlot = dStats?.conflicts ?? new Set();
+
+                  return (
+                    <div key={slotKey} style={s.cell(isOver, valid)}
+                      onDragOver={(e) => { e.preventDefault(); setDragOver(slotKey); }}
+                      onDragLeave={() => setDragOver(null)}
+                      onDrop={() => handleDrop(day.id, period.id)}
+                    >
+                      {cellSessions.map((session) => (
+                        <SessionCard key={session.id} session={session} variant="board"
+                          isConflict={conflictsInSlot.has(session.id)}
+                          isDragging={dragId === session.id}
+                          onDragStart={() => setDragId(session.id)}
+                          onDragEnd={() => setDragId(null)}
+                          onRemove={() => onSessionChange(session.id, { dayId: "", periodId: "", dateLabel: "미배치", startTime: "" })}
+                        />
+                      ))}
+                      {pStat && (pStat.testingCount > 0 || pStat.waitingCount > 0) && (
+                        <div style={{ marginTop: "auto" }}>
+                          {pStat.testingCount > 0 && <div style={s.cellStat}>응시 {pStat.testingCount}명</div>}
+                          {pStat.waitingCount > 0 && <div style={s.cellWait}>대기 {pStat.waitingCount}명</div>}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </>
+            ))}
+
+            {/* feature 2: 당일 시험 없는 학생 수 요약 행 */}
+            <div style={s.summaryCorner}>
+              <span style={{ fontSize: "0.62rem", color: "#9ca3af", textAlign: "center", lineHeight: 1.3 }}>시험<br/>없음</span>
+            </div>
+            {days.map((day) => {
+              const dayStudentCount = dayStatsMap[day.id]?.dayStudentCount ?? 0;
+              const noExamCount = totalGradeStudents - dayStudentCount;
+              return (
+                <div key={`noexam-${day.id}`} style={s.summaryCell}>
+                  <div style={{ ...s.noExamBig, color: noExamCount > 0 ? "#374151" : "#9ca3af" }}>
+                    {noExamCount}명
                   </div>
+                  <div style={s.noExamLabel}>시험 없음</div>
                 </div>
               );
             })}
           </div>
-        </aside>
 
-        <div className="schedule-board">
-          {days.map((day) => (
-            <article key={day.id} className="day-board">
-              <div className="section-head">
-                <div>
-                  <p className="eyebrow">시험일</p>
-                  <h3>{day.label}</h3>
-                </div>
+          {/* feature 3: 자동 배치 미리보기 패널 */}
+          {previews && (
+            <div style={s.previewPanel}>
+              <div style={s.previewTitle}>
+                자동 배치 결과 비교
+                <span style={{ fontSize: "0.7rem", color: "#6b7280", fontWeight: 400 }}>배치안을 선택하면 적용됩니다</span>
               </div>
-
-              <div className="period-grid">
-                <div className="period-grid-head period-grid-corner">교시</div>
-                {gradeOptions.map((grade) => (
-                  <div key={`${day.id}:grade:${grade}`} className="period-grid-head">
-                    {grade}학년
-                  </div>
-                ))}
-
-                {periodConfigs.map((period) => (
-                  <Fragment key={`${day.id}:${period.id}`}>
-                    <div key={`${day.id}:${period.id}:label`} className="period-label">
-                      <strong>{period.label}</strong>
-                    </div>
-
-                    {gradeOptions.map((grade) => {
-                      const periodSessions = sessions.filter(
-                        (session) =>
-                          session.dayId === day.id &&
-                          session.periodId === period.id &&
-                          session.grade === grade,
-                      );
-                      const recommendedSessions = getCompatibleSessions({
-                        dayId: day.id,
-                        periodId: period.id,
-                        grade,
-                        excludeSessionIds: periodSessions.map((session) => session.id),
-                      });
-
-                      return (
-                        <div
-                          key={`${day.id}:${period.id}:${grade}`}
-                          className="period-cell"
-                          onDragOver={(event) => event.preventDefault()}
-                          onDrop={(event) => {
-                            event.preventDefault();
-                            const sessionId = event.dataTransfer.getData("text/plain");
-                            const session = sessions.find((item) => item.id === sessionId);
-                            const defaultStart = getAllowedStartTimes(
-                              period,
-                              session?.duration ?? 50,
-                            )[0] ?? period.defaultStart;
-
-                            onMove(sessionId, {
-                              dayId: day.id,
-                              grade,
-                              periodId: period.id,
-                              startTime: defaultStart,
-                              dateLabel: day.label,
-                            });
-                          }}
-                        >
-                          <div className="period-cell-grid" />
-
-                          <div className="period-card-stack">
-                            {periodSessions.map((session) => {
-                              const warning = warningBySessionId[session.id];
-                              const startOptions = getAllowedStartTimes(period, session.duration);
-                              const startTime = session.startTime || startOptions[0] || period.defaultStart;
-                              const endTime = addMinutes(startTime, session.duration);
-
-                              return (
-                                <div
-                                  key={session.id}
-                                  className={`period-card ${warning ? "warning" : ""}`}
-                                >
-                                  <div className="period-card-times">
-                                    <span>{startTime}</span>
-                                    <span>{endTime}</span>
-                                  </div>
-                                  <strong className="period-card-title">
-                                    {session.subjectName || "과목명 미입력"}
-                                  </strong>
-                                  <div className="period-card-meta">
-                                    <span>{session.duration}분</span>
-                                    <span>{session.studentCount}명</span>
-                                    <span>{startTime} - {endTime}</span>
-                                  </div>
-                                  <div className="period-card-controls">
-                                    <label>
-                                      <span>시작</span>
-                                      <select
-                                        value={startTime}
-                                        onChange={(event) =>
-                                          onSessionChange(session.id, {
-                                            startTime: event.target.value,
-                                            periodId: period.id,
-                                          })
-                                        }
-                                      >
-                                        {startOptions.map((time) => (
-                                          <option key={`${session.id}:${time}`} value={time}>
-                                            {time}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </label>
-                                    <div className="period-card-endtime">
-                                      <span>종료</span>
-                                      <strong>{endTime}</strong>
-                                    </div>
-                                  </div>
-                                  {warning ? <p className="period-card-warning">{warning.message}</p> : null}
-                                </div>
-                              );
-                            })}
-                          </div>
-
-                          {recommendedSessions.length > 0 ? (
-                            <div className="recommend-box">
-                              <p>같은 교시 배치 가능</p>
-                              <div className="recommend-chip-list">
-                                {recommendedSessions.map((session) => (
-                                  <button
-                                    key={`recommend:${day.id}:${period.id}:${grade}:${session.id}`}
-                                    type="button"
-                                    className="chip"
-                                    onClick={() => {
-                                      const defaultStart = getAllowedStartTimes(
-                                        period,
-                                        session.duration,
-                                      )[0] ?? period.defaultStart;
-                                      onMove(session.id, {
-                                        dayId: day.id,
-                                        grade,
-                                        periodId: period.id,
-                                        startTime: defaultStart,
-                                        dateLabel: day.label,
-                                      });
-                                    }}
-                                  >
-                                    {session.subjectName}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          ) : null}
+              <div style={s.previewCards}>
+                {previews.map(({ key, label, desc, result, metrics }, idx) => {
+                  const rank = idx + 1;
+                  return (
+                    <div key={key} style={s.previewCard(false)}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", marginBottom: "0.25rem" }}>
+                        <span style={{ fontSize: "0.68rem", fontWeight: 800, backgroundColor: ["#4f46e5","#0891b2","#059669"][idx], color: "#fff", borderRadius: "999px", padding: "0.05rem 0.4rem" }}>{rank}순위</span>
+                        <span style={s.previewLabel}>{label}</span>
+                      </div>
+                      <div style={s.previewDesc}>{desc}</div>
+                      <div style={s.previewStat}>
+                        <div style={s.previewRow}>
+                          <span style={s.previewKey}>빈 날짜</span>
+                          <span style={s.previewVal(metrics.emptyDays > 0)}>{metrics.emptyDays}일</span>
                         </div>
-                      );
-                    })}
-                  </Fragment>
-                ))}
+                        <div style={s.previewRow}>
+                          <span style={s.previewKey}>총 대기</span>
+                          <span style={s.previewVal(false)}>{metrics.totalWaiting}명</span>
+                        </div>
+                        <div style={s.previewRow}>
+                          <span style={s.previewKey}>3연속 최대</span>
+                          <span style={s.previewVal(metrics.maxTriple > 0)}>{metrics.maxTriple}명</span>
+                        </div>
+                        <div style={s.previewRow}>
+                          <span style={s.previewKey}>미배치</span>
+                          <span style={s.previewVal(metrics.unplacedCount > 0)}>{metrics.unplacedCount}개</span>
+                        </div>
+                      </div>
+                      <button style={s.applyBtn} onClick={() => applyResult(result)}>
+                        이 배치 적용
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
-            </article>
-          ))}
+            </div>
+          )}
         </div>
       </div>
-    </section>
+    </div>
   );
 }
 
-export default ScheduleBoardPage;
+// ── 세션 카드 컴포넌트 ────────────────────────────────────────────────────────
+
+function SessionCard({ session, variant, isConflict, isDragging, onDragStart, onDragEnd, onRemove }) {
+  if (variant === "palette") {
+    return (
+      <div draggable style={s.palCard(isDragging)} onDragStart={onDragStart} onDragEnd={onDragEnd}>
+        <p style={s.palCardName}>{session.subjectName}</p>
+        <p style={s.palCardMeta}>{session.duration}분 · {session.studentCount ?? 0}명{session.isEssay ? " · 서논술" : ""}</p>
+        <div style={{ marginTop: "0.12rem" }}>
+          {session.isRequired && <span style={s.badgeReq}>지정</span>}
+          {session.isEssay    && <span style={s.badgeEssay}>서논술</span>}
+        </div>
+      </div>
+    );
+  }
+
+  const startTime = session.startTime || "";
+  const endTime   = startTime ? addMinutes(startTime, session.duration ?? 50) : "";
+
+  return (
+    <div draggable style={s.boardCard(isConflict)} onDragStart={onDragStart} onDragEnd={onDragEnd}>
+      {onRemove && <button style={s.removeBtn} onClick={onRemove} title="배치 취소">✕</button>}
+      <p style={s.boardCardName}>
+        {isConflict && <span style={s.conflictDot} title="수강생 중복 충돌" />}
+        {session.subjectName}
+      </p>
+      <p style={s.boardCardMeta}>
+        {session.studentCount ?? 0}명{startTime ? ` · ${startTime}–${endTime}` : ""}
+      </p>
+      {(session.isRequired || session.isEssay) && (
+        <div>
+          {session.isRequired && <span style={s.badgeReq}>지정</span>}
+          {session.isEssay    && <span style={s.badgeEssay}>서논술</span>}
+        </div>
+      )}
+    </div>
+  );
+}
