@@ -217,8 +217,17 @@ function App() {
           <RoomAssignmentPage
             sessions={plan.sessions}
             rooms={tenantData.rooms}
-            roomWarnings={engine.roomWarnings}
+            students={effectiveStudents}
+            enrollments={effectiveEnrollments}
             onUpdateRoomIds={(sessionId, roomIds) => updateSession(sessionId, { roomIds })}
+            onUpdateAllRoomIds={(patch) =>
+              planner.setPlan((cur) => ({
+                ...cur,
+                sessions: cur.sessions.map((s) =>
+                  patch[s.id] !== undefined ? { ...s, roomIds: patch[s.id] } : s,
+                ),
+              }))
+            }
           />
         ) : null}
 
