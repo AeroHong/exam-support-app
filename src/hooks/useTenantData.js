@@ -39,7 +39,8 @@ export function useTenantData({ schoolId, enabled }) {
         const hasRemoteData =
           (remote?.students?.length ?? 0) > 0 ||
           (remote?.enrollments?.length ?? 0) > 0 ||
-          (remote?.rooms?.length ?? 0) > 0;
+          (remote?.rooms?.length ?? 0) > 0 ||
+          (remote?.subjects?.length ?? 0) > 0;
 
         setState({
           status: "ready",

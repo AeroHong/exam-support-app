@@ -81,12 +81,13 @@ export function usePlannerData({ schoolId, ownerId, enabled }) {
     }));
 
     try {
-      await savePlan({ schoolId, ownerId, plan });
+      const savedId = await savePlan({ schoolId, ownerId, plan });
       setState((current) => ({
         ...current,
         saveStatus: "saved",
         saveError: null,
         source: "firestore",
+        plan: current.plan.id === savedId ? current.plan : { ...current.plan, id: savedId },
       }));
     } catch (error) {
       setState((current) => ({

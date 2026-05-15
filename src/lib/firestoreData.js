@@ -238,3 +238,37 @@ export async function deleteSubjectsByYear(schoolId, entryYear) {
     await batch.commit();
   }
 }
+
+// ─── 수강 신청 (Enrollments) ─────────────────────────────
+
+/**
+ * 학년별 enrollment 전체 교체.
+ * enrollment 스키마: { studentId, subjectName, grade }
+ * subjectId는 추후 과목 매칭 시 채워진다.
+ */
+export async function bulkSaveEnrollmentsByGrade(schoolId, enrollments, grade) {
+  if (!firebaseDb || !schoolId || !grade) return;
+
+  // 해당 학년 기존 enrollment 삭제
+  const existing = await getDocs(collection(firebaseDb, "schools", schoolId, "enrollments"));
+  const toDelete = existing.docs.filter((d) => d.data().grade === grade);
+  const CHUNK = 500;
+
+  for (let i = 0; i < toDelete.length; i += CHUNK) {
+    const batch = writeBatch(firebaseDb);
+    toDelete.slice(i, i + CHUNK).forEach((d) => {
+      batch.delete(doc(firebaseDb, "schools", schoolId, "enrollments", d.id));
+    });
+    await batch.commit();
+  }
+
+  // 새 enrollment 저장
+  const colRef = collection(firebaseDb, "schools", schoolId, "enrollments");
+  for (let i = 0; i < enrollments.length; i += CHUNK) {
+    const batch = writeBatch(firebaseDb);
+    enrollments.slice(i, i + CHUNK).forEach((enrollment) => {
+      batch.set(doc(colRef), enrollment);
+    });
+    await batch.commit();
+  }
+}

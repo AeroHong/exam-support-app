@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import {
+  bulkSaveEnrollmentsByGrade,
   bulkSaveStudents,
   deleteStudent,
   deleteStudentsByGrade,
@@ -276,6 +277,23 @@ export default function StudentRosterTab({ schoolId }) {
     setUploading(true);
     try {
       await bulkSaveStudents(schoolId, parsedStudents);
+
+      // 2·3학년 선택과목 → enrollment 자동 생성
+      const uploadedGrades = [...new Set(parsedStudents.map((s) => s.grade))];
+      for (const grade of uploadedGrades) {
+        if (grade === 1) continue; // 1학년은 선택과목 없음
+        const gradeStudents = parsedStudents.filter((s) => s.grade === grade);
+        const enrollments = [];
+        gradeStudents.forEach((student) => {
+          (student.electiveSubjects ?? []).forEach((subjectName) => {
+            if (subjectName) {
+              enrollments.push({ studentId: student.id, subjectName, grade });
+            }
+          });
+        });
+        await bulkSaveEnrollmentsByGrade(schoolId, enrollments, grade);
+      }
+
       setNotice({ type: "ok", msg: `${parsedStudents.length}명 저장 완료` });
       setParsedStudents([]); setPreviewRows(null); setUploadOpen(false);
       await fetchStudents();

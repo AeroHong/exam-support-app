@@ -22,11 +22,12 @@ export async function loadTenantData(schoolId) {
   }
 
   const schoolRef = doc(firebaseDb, "schools", schoolId);
-  const [schoolSnap, studentsSnap, enrollmentsSnap, roomsSnap] = await Promise.all([
+  const [schoolSnap, studentsSnap, enrollmentsSnap, roomsSnap, subjectsSnap] = await Promise.all([
     getDoc(schoolRef),
     getDocs(collection(firebaseDb, "schools", schoolId, "students")),
     getDocs(collection(firebaseDb, "schools", schoolId, "enrollments")),
     getDocs(collection(firebaseDb, "schools", schoolId, "rooms")),
+    getDocs(collection(firebaseDb, "schools", schoolId, "subjects")),
   ]);
 
   return {
@@ -36,6 +37,7 @@ export async function loadTenantData(schoolId) {
     students: mapDocs(studentsSnap),
     enrollments: mapDocs(enrollmentsSnap),
     rooms: mapDocs(roomsSnap),
+    subjects: mapDocs(subjectsSnap),
   };
 }
 
@@ -72,7 +74,10 @@ export async function savePlan({ schoolId, ownerId, plan }) {
     throw new Error("저장에 필요한 Firebase 정보가 부족합니다.");
   }
 
-  const planId = plan.id;
+  // Auto-generate plan ID if not set
+  const planId =
+    plan.id || doc(collection(firebaseDb, "schools", schoolId, "plans")).id;
+
   const planRef = doc(firebaseDb, "schools", schoolId, "plans", planId);
   const sessionsCollectionRef = collection(
     firebaseDb,
@@ -91,7 +96,9 @@ export async function savePlan({ schoolId, ownerId, plan }) {
       ownerId,
       schoolId,
       name: plan.name,
+      semester: plan.semester ?? null,
       days: plan.days,
+      periods: plan.periods ?? [],
       activeFilter: plan.activeFilter,
       status: plan.status ?? "draft",
       updatedAt: serverTimestamp(),

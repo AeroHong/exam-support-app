@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import DashboardPanel from "./components/DashboardPanel";
 import DataManagementPage from "./components/DataManagementPage";
-import ExamInputPage from "./components/ExamInputPage";
+import ExamPlanPage from "./components/ExamPlanPage";
 import LoginScreen from "./components/LoginScreen";
 import RoomAssignmentPage from "./components/RoomAssignmentPage";
 import ScheduleBoardPage from "./components/ScheduleBoardPage";
@@ -14,10 +14,10 @@ import { useTenantData } from "./hooks/useTenantData";
 
 const workflowPages = [
   { key: "data", label: "기초 데이터" },
-  { key: "overview", label: "개요" },
-  { key: "input", label: "시험 입력" },
+  { key: "examplan", label: "시험계획" },
   { key: "rooms", label: "고사실 배정" },
   { key: "schedule", label: "일정 배치" },
+  { key: "overview", label: "개요" },
 ];
 
 function App() {
@@ -178,16 +178,13 @@ function App() {
           />
         ) : null}
 
-        {activePage === "input" ? (
-          <ExamInputPage
+        {activePage === "examplan" ? (
+          <ExamPlanPage
+            plan={plan}
+            onPlanChange={(patch) => planner.setPlan((current) => ({ ...current, ...patch }))}
+            subjects={tenantData.subjects ?? []}
             students={effectiveStudents}
             enrollments={effectiveEnrollments}
-            sessions={plan.sessions}
-            onApplyGenerated={({ students, enrollments, sessions }) => {
-              setDraftStudents(students);
-              setDraftEnrollments(enrollments);
-              setSessions(sessions);
-            }}
           />
         ) : null}
 
