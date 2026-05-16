@@ -72,8 +72,8 @@ export default function VersionBrowserModal({ schoolId, currentPlanId, onLoad, o
                   </div>
                 </div>
                 <div style={s.btnGroup}>
-                  <button style={s.loadBtn} onClick={() => onLoad(v.plan)}>불러오기</button>
-                  <button style={s.dupeBtn} onClick={() => onDuplicate(v.plan)}>복제</button>
+                  <button style={s.loadBtn} onClick={() => onLoad(v)}>불러오기</button>
+                  <button style={s.dupeBtn} onClick={() => onDuplicate(v)}>복제</button>
                 </div>
               </div>
             ))

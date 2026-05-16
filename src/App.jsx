@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import DashboardPanel from "./components/DashboardPanel";
 import DataManagementPage from "./components/DataManagementPage";
 import ExamPlanPage from "./components/ExamPlanPage";
 import LoginScreen from "./components/LoginScreen";
+import PrintManagementPage from "./components/PrintManagementPage";
 import RoomAssignmentPage from "./components/RoomAssignmentPage";
 import ScheduleBoardPage from "./components/ScheduleBoardPage";
 import StudentListModal from "./components/StudentListModal";
@@ -18,6 +19,7 @@ const PAGES = [
   { key: "examplan", label: "시험계획" },
   { key: "schedule", label: "일정 배치" },
   { key: "rooms",    label: "고사실 배정" },
+  { key: "print",    label: "출력물 관리" },
   { key: "overview", label: "개요" },
 ];
 
@@ -112,6 +114,52 @@ function App() {
     });
   };
 
+  // 실시간 동기화: tenantData 변경 시 세션 인원수 자동 재계산
+  const prevLoadedAtRef = useRef(null);
+  useEffect(() => {
+    // 초기 로드는 건너뛰기
+    if (prevLoadedAtRef.current === null) {
+      prevLoadedAtRef.current = tenantData.loadedAt;
+      return;
+    }
+
+    // loadedAt이 변경됐고, 세션이 있으면 인원수 재계산
+    if (tenantData.loadedAt !== prevLoadedAtRef.current && plan.sessions.length > 0) {
+      prevLoadedAtRef.current = tenantData.loadedAt;
+
+      planner.setPlan((cur) => {
+        const sessions = cur.sessions.map((session) => {
+          let newCount;
+
+          if (session.isRequired) {
+            // 학교지정: 위탁 학생 제외
+            newCount = tenantData.students.filter(
+              (s) => String(s.grade) === String(session.grade) && s.examStatus !== "delegation"
+            ).length;
+          } else {
+            // 학생선택: enrollment에 있는 학생 중 위탁이 아닌 학생만 카운트
+            const enrolledStudentIds = new Set(
+              tenantData.enrollments
+                .filter(
+                  (e) =>
+                    String(e.grade) === String(session.grade) &&
+                    (e.subjectName === session.subjectName ||
+                      (e.subjectId && e.subjectId === session.subjectId))
+                )
+                .map((e) => e.studentId)
+            );
+            newCount = tenantData.students.filter(
+              (s) => enrolledStudentIds.has(s.id) && s.examStatus !== "delegation"
+            ).length;
+          }
+
+          return { ...session, studentCount: newCount };
+        });
+        return { ...cur, sessions };
+      });
+    }
+  }, [tenantData.loadedAt, tenantData.students, tenantData.enrollments, plan.sessions.length, planner]);
+
   // 수강생 데이터 변동 처리: cascade reload + studentCount 재계산 + 확정 해제
   const handleDataChanged = async ({ grade, delta, type }) => {
     const newData = await tenantData.reload();
@@ -125,13 +173,30 @@ function App() {
         if (!affectedGrades.includes(String(session.grade))) return session;
         // statusSpecial(특수/별도고사실 변경)은 응시 인원수에 영향 없음
         if (type === "statusSpecial") return session;
-        const newCount = session.isRequired
-          ? ns.filter((s) => String(s.grade) === String(session.grade) && s.examStatus !== "delegation").length
-          : ne.filter((e) =>
-              String(e.grade) === String(session.grade) &&
-              (e.subjectName === session.subjectName ||
-                (e.subjectId && e.subjectId === session.subjectId)),
-            ).length;
+
+        let newCount;
+        if (session.isRequired) {
+          // 학교지정: 위탁 학생 제외
+          newCount = ns.filter(
+            (s) => String(s.grade) === String(session.grade) && s.examStatus !== "delegation"
+          ).length;
+        } else {
+          // 학생선택: enrollment에 있는 학생 중 위탁이 아닌 학생만 카운트
+          const enrolledStudentIds = new Set(
+            ne
+              .filter(
+                (e) =>
+                  String(e.grade) === String(session.grade) &&
+                  (e.subjectName === session.subjectName ||
+                    (e.subjectId && e.subjectId === session.subjectId))
+              )
+              .map((e) => e.studentId)
+          );
+          newCount = ns.filter(
+            (s) => enrolledStudentIds.has(s.id) && s.examStatus !== "delegation"
+          ).length;
+        }
+
         return { ...session, studentCount: newCount };
       });
 
@@ -148,6 +213,11 @@ function App() {
     });
 
     setDataChangeLog({ grade, delta, type, affectedGrades, timestamp: Date.now() });
+
+    // 시험계획 탭이 열려있으면 자동 탭 전환으로 즉시 반영 유도
+    if (activePage === "examplan") {
+      setDataChangeLog((prev) => prev ? { ...prev, autoSwitched: true } : prev);
+    }
   };
 
   const handleConfirmSchedule = (grade) => {
@@ -286,7 +356,7 @@ function App() {
       {/* ── 페이지 콘텐츠 ── */}
       <main>
         {activePage === "data" ? (
-          <DataManagementPage schoolId={auth.profile?.schoolId} students={effectiveStudents} subjects={tenantData.subjects ?? []} onDataChanged={handleDataChanged} />
+          <DataManagementPage schoolId={auth.profile?.schoolId} students={effectiveStudents} subjects={tenantData.subjects ?? []} onDataChanged={handleDataChanged} onReloadStudents={tenantData.reload} />
         ) : null}
 
         {activePage === "examplan" ? (
@@ -298,6 +368,19 @@ function App() {
             enrollments={effectiveEnrollments}
             studentsLoadedAt={tenantData.loadedAt}
             onReloadStudents={tenantData.reload}
+          />
+        ) : null}
+
+        {activePage === "print" ? (
+          <PrintManagementPage
+            plan={plan}
+            tenantData={{
+              students: effectiveStudents,
+              enrollments: effectiveEnrollments,
+              rooms: tenantData.rooms,
+              subjects: tenantData.subjects,
+            }}
+            schoolName={schoolName}
           />
         ) : null}
 
@@ -380,12 +463,24 @@ function App() {
         <VersionBrowserModal
           schoolId={auth.profile?.schoolId}
           currentPlanId={plan.id}
-          onLoad={(versionPlan) => {
-            planner.setPlan({ ...versionPlan, id: plan.id || versionPlan.id });
+          onLoad={async (versionData) => {
+            planner.setPlan({ ...versionData.plan, id: plan.id || versionData.plan.id });
+
+            // enrollment 데이터 복구
+            if (versionData.enrollments && versionData.enrollments.length > 0) {
+              const { restoreEnrollments } = await import("./lib/firestorePlanner");
+              await restoreEnrollments({
+                schoolId: auth.profile?.schoolId,
+                enrollments: versionData.enrollments,
+              });
+              // tenant 데이터 새로고침
+              tenantData.reload();
+            }
+
             setVersionModalOpen(false);
           }}
-          onDuplicate={(versionPlan) => {
-            planner.setPlan({ ...versionPlan, id: "" });
+          onDuplicate={(versionData) => {
+            planner.setPlan({ ...versionData.plan, id: "" });
             setVersionModalOpen(false);
           }}
           onClose={() => setVersionModalOpen(false)}

@@ -278,6 +278,7 @@ function SubjectModal({ subject, onClose, onSave }) {
 
   const [form, setForm] = useState(() => subject ? {
     name: subject.name || "",
+    subjectCode: subject.subjectCode || "",
     subjectGroup: subject.subjectGroup || "국어",
     courseType: subject.courseType || "일반",
     category: subject.category || "학교지정",
@@ -290,6 +291,7 @@ function SubjectModal({ subject, onClose, onSave }) {
     entryYear: subject.entryYear || curYear,
   } : {
     name: "",
+    subjectCode: "",
     subjectGroup: "국어",
     courseType: "일반",
     category: "학교지정",
@@ -383,11 +385,18 @@ function SubjectModal({ subject, onClose, onSave }) {
             </div>
           </div>
 
-          {/* 과목명 */}
-          <div style={s.fgroup}>
-            <label style={s.label}>과목명</label>
-            <input style={s.input} type="text" required placeholder="예: 공통국어1"
-              value={form.name} onChange={e => set("name", e.target.value)} />
+          {/* 과목명 + 과목코드 */}
+          <div style={s.grid2}>
+            <div>
+              <label style={s.label}>과목명</label>
+              <input style={s.input} type="text" required placeholder="예: 공통국어1"
+                value={form.name} onChange={e => set("name", e.target.value)} />
+            </div>
+            <div>
+              <label style={s.label}>과목코드 (선택)</label>
+              <input style={s.input} type="text" placeholder="예: KR101"
+                value={form.subjectCode} onChange={e => set("subjectCode", e.target.value)} />
+            </div>
           </div>
 
           {/* 입학년도 + 학점 */}
@@ -489,6 +498,67 @@ function SubjectModal({ subject, onClose, onSave }) {
   );
 }
 
+// ─── 간편 업로드 파서 (과목코드 포함 Excel) ─────────────────────────────────────
+
+function parseSimpleSubjectExcel(arrayBuffer) {
+  const wb = XLSX.read(new Uint8Array(arrayBuffer), { type: "array" });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws);
+
+  const courses = [];
+  const errors = [];
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const name = (row["과목명"] || "").toString().trim();
+    if (!name) continue;
+
+    try {
+      const category = (row["구분"] || "").toString().trim();
+      const grade = parseInt(row["학년"]) || null;
+      const semester = parseInt(row["학기"]) || null;
+
+      if (!["학교지정", "학생선택"].includes(category)) {
+        errors.push(`행 ${i + 2}: 구분 값이 "학교지정" 또는 "학생선택"이어야 합니다.`);
+        continue;
+      }
+      if (!grade || grade < 1 || grade > 3) {
+        errors.push(`행 ${i + 2} (${name}): 학년 값 오류`);
+        continue;
+      }
+
+      const course = {
+        name,
+        subjectCode: (row["과목코드"] || "").toString().trim(),
+        subjectGroup: (row["교과군"] || "").toString().trim(),
+        courseType: (row["과목구분"] || "").toString().trim(),
+        category,
+        grade,
+        semester,
+        credits: parseInt(row["운영학점"]) || 3,
+        baseCredits: parseInt(row["기본학점"]) || 4,
+        entryYear: parseInt(row["입학년도"]) || new Date().getFullYear(),
+        description: (row["비고"] || "").toString().trim(),
+      };
+
+      // 학생선택: selectionBlock 파싱
+      if (category === "학생선택") {
+        const sbGrade = parseInt(row["선택블록_학년"]) || grade;
+        const sbSemester = parseInt(row["선택블록_학기"]) || semester;
+        const pickCount = parseInt(row["선택블록_택N"]) || 5;
+        const blockNumber = parseInt(row["선택블록_번호"]) || 1;
+        course.selectionBlock = { grade: sbGrade, semester: sbSemester, pickCount, blockNumber };
+      }
+
+      courses.push(course);
+    } catch (e) {
+      errors.push(`행 ${i + 2} (${name}): ${e.message}`);
+    }
+  }
+
+  return { courses, errors };
+}
+
 // ─── ImportModal (교육청 엑셀 가져오기) ──────────────────────────────────────────
 
 const CUR_YEAR = new Date().getFullYear();
@@ -502,6 +572,7 @@ function ImportModal({ schoolId, onClose, onDone }) {
   const [parsed, setParsed] = useState(null);
   const [step, setStep] = useState("select"); // select | preview | saving
   const [err, setErr] = useState("");
+  const [uploadMode, setUploadMode] = useState("education"); // education | simple
 
   function handleFileChange(e) {
     const f = e.target.files?.[0];
@@ -537,7 +608,13 @@ function ImportModal({ schoolId, onClose, onDone }) {
     const reader = new FileReader();
     reader.onload = ev => {
       try {
-        const result = parseEducationExcel(ev.target.result, targetGrade);
+        let result;
+        if (uploadMode === "simple") {
+          result = parseSimpleSubjectExcel(ev.target.result);
+        } else {
+          result = parseEducationExcel(ev.target.result, targetGrade);
+        }
+
         if (!result.courses.length) {
           setErr("파싱된 과목이 없습니다. 파일 형식 및 학년 선택을 확인하세요.");
           return;
@@ -555,9 +632,23 @@ function ImportModal({ schoolId, onClose, onDone }) {
     if (!parsed?.courses?.length) return;
     setStep("saving");
     try {
-      const withYear = parsed.courses.map(c => ({ ...c, entryYear }));
-      await bulkSaveSubjectsByYear(schoolId, withYear, entryYear);
-      onDone(parsed.courses.length, entryYear);
+      let saveData;
+      if (uploadMode === "simple") {
+        // 간편 업로드: entryYear는 각 행에 이미 포함되어 있음
+        saveData = parsed.courses;
+        // 모든 entryYear 추출하여 삭제 대상 결정
+        const years = [...new Set(parsed.courses.map(c => c.entryYear).filter(Boolean))];
+        for (const year of years) {
+          const yearCourses = parsed.courses.filter(c => c.entryYear === year);
+          await bulkSaveSubjectsByYear(schoolId, yearCourses, year);
+        }
+        onDone(parsed.courses.length, years.length > 1 ? "여러 년도" : years[0]);
+      } else {
+        // 교육청 엑셀: 입학년도 단일 선택
+        const withYear = parsed.courses.map(c => ({ ...c, entryYear }));
+        await bulkSaveSubjectsByYear(schoolId, withYear, entryYear);
+        onDone(parsed.courses.length, entryYear);
+      }
     } catch (e) {
       setErr("저장 실패: " + e.message);
       setStep("preview");
@@ -570,10 +661,29 @@ function ImportModal({ schoolId, onClose, onDone }) {
   return (
     <div style={s.backdrop} onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={s.modal}>
-        <p style={s.modalTitle}>교육과정 엑셀 가져오기</p>
+        <p style={s.modalTitle}>과목 엑셀 가져오기</p>
+
+        {/* 업로드 모드 선택 */}
+        <div style={s.fgroup}>
+          <label style={s.label}>업로드 방식</label>
+          <div style={{ display: "flex", gap: "1rem" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontSize: "0.875rem" }}>
+              <input type="radio" name="uploadMode" checked={uploadMode === "education"}
+                onChange={() => { setUploadMode("education"); setParsed(null); setStep("select"); }} />
+              교육청 배당표
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontSize: "0.875rem" }}>
+              <input type="radio" name="uploadMode" checked={uploadMode === "simple"}
+                onChange={() => { setUploadMode("simple"); setParsed(null); setStep("select"); }} />
+              간편 업로드 (다운로드 형식)
+            </label>
+          </div>
+        </div>
+
         <p style={{ fontSize: "0.82rem", color: "#6b7280", marginBottom: "1rem" }}>
-          교육청 제출용 교육과정 학점 배당표(.xlsx)를 업로드하면 과목이 자동 등록됩니다.
-          2022 개정 / 2015 개정 형식 모두 지원합니다.
+          {uploadMode === "education"
+            ? "교육청 제출용 교육과정 학점 배당표(.xlsx)를 업로드하면 과목이 자동 등록됩니다. 2022 개정 / 2015 개정 형식 모두 지원합니다."
+            : "Excel 다운로드로 받은 파일에 과목코드를 추가한 후 다시 업로드하면 일괄 등록됩니다."}
         </p>
 
         {err && (
@@ -597,37 +707,41 @@ function ImportModal({ schoolId, onClose, onDone }) {
           </div>
         </div>
 
-        {/* 입학년도 + 불러올 학년 */}
-        <div style={s.grid2}>
-          <div>
-            <label style={s.label}>입학년도 (신입생 기준)</label>
-            <select style={s.mSelect} value={entryYear} onChange={e => handleYearChange(Number(e.target.value))}>
-              {YEAR_OPTS.map(y => <option key={y} value={y}>{y}년</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={s.label}>불러올 학년</label>
-            <select style={s.mSelect} value={gradeSelectVal} onChange={e => handleGradeChange(e.target.value)}>
-              {currentGrade != null && (
-                <option value={String(currentGrade)}>현재 {currentGrade}학년만 (권장)</option>
-              )}
-              <option value="all">전체 (1·2·3학년)</option>
-              {[1, 2, 3].filter(g => g !== currentGrade).map(g => (
-                <option key={g} value={String(g)}>{g}학년만</option>
-              ))}
-            </select>
-          </div>
-        </div>
+        {/* 교육청 배당표 모드일 때만 입학년도/학년 선택 표시 */}
+        {uploadMode === "education" && (
+          <>
+            <div style={s.grid2}>
+              <div>
+                <label style={s.label}>입학년도 (신입생 기준)</label>
+                <select style={s.mSelect} value={entryYear} onChange={e => handleYearChange(Number(e.target.value))}>
+                  {YEAR_OPTS.map(y => <option key={y} value={y}>{y}년</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={s.label}>불러올 학년</label>
+                <select style={s.mSelect} value={gradeSelectVal} onChange={e => handleGradeChange(e.target.value)}>
+                  {currentGrade != null && (
+                    <option value={String(currentGrade)}>현재 {currentGrade}학년만 (권장)</option>
+                  )}
+                  <option value="all">전체 (1·2·3학년)</option>
+                  {[1, 2, 3].filter(g => g !== currentGrade).map(g => (
+                    <option key={g} value={String(g)}>{g}학년만</option>
+                  ))}
+                </select>
+              </div>
+            </div>
 
-        {/* 학년 안내 */}
-        {currentGrade != null ? (
-          <div style={{ fontSize: "0.8rem", color: "#4f46e5", backgroundColor: "#eef2ff", padding: "0.4rem 0.75rem", borderRadius: "6px", marginBottom: "1rem" }}>
-            {entryYear}년 신입생 → {CUR_YEAR}년 현재 <strong>{currentGrade}학년</strong>
-          </div>
-        ) : (
-          <div style={{ fontSize: "0.8rem", color: "#dc2626", backgroundColor: "#fef2f2", padding: "0.4rem 0.75rem", borderRadius: "6px", marginBottom: "1rem" }}>
-            해당 입학년도 학생은 현재 재학 중이 아닙니다. (졸업 또는 미입학)
-          </div>
+            {/* 학년 안내 */}
+            {currentGrade != null ? (
+              <div style={{ fontSize: "0.8rem", color: "#4f46e5", backgroundColor: "#eef2ff", padding: "0.4rem 0.75rem", borderRadius: "6px", marginBottom: "1rem" }}>
+                {entryYear}년 신입생 → {CUR_YEAR}년 현재 <strong>{currentGrade}학년</strong>
+              </div>
+            ) : (
+              <div style={{ fontSize: "0.8rem", color: "#dc2626", backgroundColor: "#fef2f2", padding: "0.4rem 0.75rem", borderRadius: "6px", marginBottom: "1rem" }}>
+                해당 입학년도 학생은 현재 재학 중이 아닙니다. (졸업 또는 미입학)
+              </div>
+            )}
+          </>
         )}
 
         {/* Step: select */}
@@ -645,7 +759,7 @@ function ImportModal({ schoolId, onClose, onDone }) {
               <p style={{ fontWeight: 700, fontSize: "0.9rem", color: "#111827", marginBottom: "0.5rem" }}>
                 분석 완료: 총 {parsed.courses.length}개 과목
               </p>
-              <div style={{ display: "flex", gap: "1rem" }}>
+              <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
                 {[1, 2, 3].map(g => {
                   const cnt = parsed.courses.filter(c => c.grade === g).length;
                   return cnt > 0 ? (
@@ -658,6 +772,11 @@ function ImportModal({ schoolId, onClose, onDone }) {
                     <span key={cat} style={{ fontSize: "0.82rem", color: "#6b7280" }}>{cat} {cnt}개</span>
                   ) : null;
                 })}
+                {uploadMode === "simple" && (
+                  <span style={{ fontSize: "0.82rem", color: "#4f46e5", fontWeight: 600 }}>
+                    과목코드 {parsed.courses.filter(c => c.subjectCode).length}개
+                  </span>
+                )}
               </div>
               {parsed.errors.length > 0 && (
                 <div style={{ marginTop: "0.5rem", paddingTop: "0.5rem", borderTop: "1px solid #e5e7eb" }}>
@@ -668,7 +787,9 @@ function ImportModal({ schoolId, onClose, onDone }) {
               )}
             </div>
             <p style={{ fontSize: "0.8rem", color: "#6b7280", marginBottom: "0.75rem" }}>
-              기존 <strong>{entryYear}년</strong> 입학 과목 데이터는 삭제되고 새 데이터로 교체됩니다.
+              {uploadMode === "education"
+                ? `기존 ${entryYear}년 입학 과목 데이터는 삭제되고 새 데이터로 교체됩니다.`
+                : "파일에 포함된 입학년도별로 기존 데이터가 삭제되고 새 데이터로 교체됩니다."}
             </p>
             <div style={{ display: "flex", gap: "0.5rem" }}>
               <button type="button" style={{ ...s.outlineBtn, flex: 1 }}
@@ -761,6 +882,41 @@ export default function SubjectsTab({ schoolId }) {
     }
   }
 
+  function handleDownloadExcel() {
+    if (!subjects.length) {
+      alert("다운로드할 과목이 없습니다.");
+      return;
+    }
+
+    const data = subjects.map(s => ({
+      "구분": s.category || "",
+      "교과군": s.subjectGroup || "",
+      "과목구분": s.courseType || "",
+      "과목명": s.name || "",
+      "과목코드": s.subjectCode || "",
+      "학년": s.grade || "",
+      "학기": s.semester || "",
+      "기본학점": s.baseCredits || "",
+      "운영학점": s.credits || "",
+      "입학년도": s.entryYear || "",
+      "선택블록_학년": s.selectionBlock?.grade || "",
+      "선택블록_학기": s.selectionBlock?.semester || "",
+      "선택블록_택N": s.selectionBlock?.pickCount || "",
+      "선택블록_번호": s.selectionBlock?.blockNumber || "",
+      "비고": s.description || "",
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "과목목록");
+
+    const now = new Date();
+    const fileName = `과목목록_${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}.xlsx`;
+    XLSX.writeFile(wb, fileName);
+
+    setNotice({ type: "ok", msg: `${subjects.length}개 과목을 다운로드했습니다.` });
+  }
+
   // 필터 목록
   const allSg = ["전체", ...new Set(subjects.map(s => s.subjectGroup).filter(Boolean))];
   const filtered = subjects.filter(s => {
@@ -794,9 +950,14 @@ export default function SubjectsTab({ schoolId }) {
         </div>
         <div style={s.btnRow}>
           {subjects.length > 0 && (
-            <button style={s.dangerBtn} onClick={handleDeleteAll} disabled={loading}>
-              전체 삭제
-            </button>
+            <>
+              <button style={s.outlineBtn} onClick={handleDownloadExcel} disabled={loading}>
+                Excel 다운로드
+              </button>
+              <button style={s.dangerBtn} onClick={handleDeleteAll} disabled={loading}>
+                전체 삭제
+              </button>
+            </>
           )}
           <button style={s.outlineBtn} onClick={() => setImportOpen(true)}>
             엑셀 가져오기
@@ -847,6 +1008,7 @@ export default function SubjectsTab({ schoolId }) {
             <th style={s.th}>교과군</th>
             <th style={s.th}>과목구분</th>
             <th style={s.th}>과목명</th>
+            <th style={s.th}>과목코드</th>
             <th style={s.th}>학점</th>
             <th style={s.th}>개설정보</th>
             <th style={s.th}>입학년도</th>
@@ -861,9 +1023,9 @@ export default function SubjectsTab({ schoolId }) {
         </thead>
         <tbody>
           {loading ? (
-            <tr><td colSpan={8} style={s.emptyRow}>불러오는 중…</td></tr>
+            <tr><td colSpan={9} style={s.emptyRow}>불러오는 중…</td></tr>
           ) : filtered.length === 0 ? (
-            <tr><td colSpan={8} style={s.emptyRow}>
+            <tr><td colSpan={9} style={s.emptyRow}>
               {subjects.length === 0
                 ? "등록된 과목이 없습니다. 엑셀 가져오기 또는 과목 추가를 이용하세요."
                 : "조건에 맞는 과목이 없습니다."}
@@ -880,6 +1042,9 @@ export default function SubjectsTab({ schoolId }) {
               <td style={s.tdMuted}>{subject.subjectGroup || "—"}</td>
               <td style={{ ...s.tdMuted, fontSize: "0.78rem" }}>{subject.courseType || "—"}</td>
               <td style={{ ...s.td, fontWeight: 600 }}>{subject.name}</td>
+              <td style={{ ...s.tdMuted, fontSize: "0.78rem", fontFamily: "monospace" }}>
+                {subject.subjectCode || "—"}
+              </td>
               <td style={s.tdMuted}>{subject.credits || "—"}</td>
               <td style={s.tdMuted}>{scheduleLabel(subject)}</td>
               <td style={s.tdMuted}>{subject.entryYear || "—"}</td>

@@ -142,15 +142,23 @@ function mergeExamConfig(sessions, subjects, prevConfig) {
   return next;
 }
 
-/** 학교지정: 해당 학년 전체 학생 수 / 학생선택: enrollment 기반 */
+/** 학교지정: 해당 학년 전체 학생 수 / 학생선택: enrollment 기반 (위탁 학생 제외) */
 function calcAutoCount(subject, students, enrollments) {
   if (subject.category === "학교지정") {
     return students.filter(
       (s) => String(s.grade) === String(subject.grade) && s.examStatus !== "delegation",
     ).length;
   }
-  return enrollments.filter(
-    (e) => e.subjectName === subject.name || e.subjectId === subject.id,
+
+  // 학생선택: enrollment에 있는 학생 중 위탁이 아닌 학생만 카운트
+  const enrolledStudentIds = new Set(
+    enrollments
+      .filter((e) => e.subjectName === subject.name || e.subjectId === subject.id)
+      .map((e) => e.studentId)
+  );
+
+  return students.filter(
+    (s) => enrolledStudentIds.has(s.id) && s.examStatus !== "delegation"
   ).length;
 }
 
@@ -310,14 +318,18 @@ function StudentListModal({ subject, students, enrollments, onClose }) {
 
   const list =
     subject.category === "학교지정"
-      ? gradeStudents.sort((a, b) => a.id.localeCompare(b.id))
+      ? gradeStudents
+          .filter((s) => s.examStatus !== "delegation") // 위탁 학생 제외
+          .sort((a, b) => a.id.localeCompare(b.id))
       : (() => {
           const enrolled = new Set(
             enrollments
               .filter((e) => e.subjectName === subject.name || e.subjectId === subject.id)
               .map((e) => e.studentId),
           );
-          return gradeStudents.filter((s) => enrolled.has(s.id)).sort((a, b) => a.id.localeCompare(b.id));
+          return gradeStudents
+            .filter((s) => enrolled.has(s.id) && s.examStatus !== "delegation") // 위탁 학생 제외
+            .sort((a, b) => a.id.localeCompare(b.id));
         })();
 
   return (

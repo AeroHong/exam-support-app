@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getDefaultTenantData } from "../data/defaults";
-import { loadTenantData } from "../lib/firestorePlanner";
+import { loadTenantData, subscribeTenantData } from "../lib/firestorePlanner";
 
 export function useTenantData({ schoolId, enabled }) {
   const [state, setState] = useState({
@@ -51,6 +51,7 @@ export function useTenantData({ schoolId, enabled }) {
     }
   }
 
+  // 실시간 리스너 설정
   useEffect(() => {
     if (!enabled || !schoolId) {
       setState({
@@ -63,7 +64,30 @@ export function useTenantData({ schoolId, enabled }) {
       return;
     }
 
+    // 초기 로드
     doLoad(schoolId);
+
+    // 실시간 동기화 구독
+    const unsubscribe = subscribeTenantData(schoolId, (data) => {
+      const hasRemoteData =
+        (data?.students?.length ?? 0) > 0 ||
+        (data?.enrollments?.length ?? 0) > 0 ||
+        (data?.rooms?.length ?? 0) > 0 ||
+        (data?.subjects?.length ?? 0) > 0;
+
+      if (!hasRemoteData) return; // seed 데이터 유지
+
+      setState((current) => ({
+        ...current,
+        status: "ready",
+        source: "firestore",
+        error: null,
+        loadedAt: Date.now(),
+        ...data,
+      }));
+    });
+
+    return () => unsubscribe?.();
   }, [enabled, schoolId]);
 
   const reload = () => doLoad(schoolIdRef.current);

@@ -317,7 +317,7 @@ const GRADE_TABS = [
   { key: 3, label: "3학년" },
 ];
 
-export default function StudentRosterTab({ schoolId, subjects = [], onDataChanged }) {
+export default function StudentRosterTab({ schoolId, subjects = [], onDataChanged, onReloadStudents }) {
   const fileInputRef = useRef(null);
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -482,10 +482,12 @@ export default function StudentRosterTab({ schoolId, subjects = [], onDataChange
       return [...prev, data].sort((a, b) => a.id.localeCompare(b.id));
     });
 
-    // examStatus 변경 시 → 상위에 알려 tenantData 갱신 + 확정 해제
+    // examStatus 변경 시 → 상위에 알려 확정 해제
+    // 실시간 리스너가 자동으로 tenantData를 갱신하므로 수동 reload 불필요
     if (editTarget && prevStatus !== (data.examStatus ?? "")) {
       const isDelegationChange =
         data.examStatus === "delegation" || prevStatus === "delegation";
+
       onDataChanged?.({
         grade: String(data.grade),
         delta: 0,
