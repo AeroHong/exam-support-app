@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { DEFAULT_PERIODS } from "../data/defaults";
 
@@ -441,7 +441,8 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
   const [periods, setPeriods]     = useState(() =>
     (plan.periods?.length ? plan.periods : DEFAULT_PERIODS).map(normalizePeriod),
   );
-  const [examConfig, setExamConfig] = useState({});
+  // 사용자의 미확정 변경사항 (확정 전 체크박스·시간·서논술 등)
+  const [examOverrides, setExamOverrides] = useState({});
   const [gradeFilter, setGradeFilter] = useState("1");
   const [settingsOpen, setSettingsOpen] = useState(true);
   const [modalSubject, setModalSubject] = useState(null);
@@ -449,14 +450,9 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
   const [enrollmentDiff, setEnrollmentDiff] = useState(null);
   const [xlsxImportResult, setXlsxImportResult] = useState(null);
   const xlsxInputRef = useRef(null);
-  const planSessionsRef = useRef(plan.sessions);
-  planSessionsRef.current = plan.sessions;
 
-  // subjects 또는 plan.id 변경 시 재초기화 — plan.id 없으면 F5 후 세션이 무시됨
-  useEffect(() => {
-    if (subjects.length === 0) return;
-    setExamConfig((prev) => mergeExamConfig(planSessionsRef.current, subjects, prev));
-  }, [subjects, plan.id]);
+  // 플랜 전환(F5·버전 복원) 시 미확정 변경사항 초기화
+  useEffect(() => { setExamOverrides({}); }, [plan.id]);
 
   useEffect(() => {
     setPlanName(plan.name ?? "");
@@ -465,8 +461,35 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
     setPeriods((plan.periods?.length ? plan.periods : DEFAULT_PERIODS).map(normalizePeriod));
   }, [plan.id]);
 
+  // Firestore 세션에서 도출한 베이스라인 — 타이밍과 무관하게 항상 최신 상태
+  const sessionBaseline = useMemo(() => {
+    const bySubjectId = Object.fromEntries(
+      plan.sessions.filter((s) => s.subjectId).map((s) => [s.subjectId, s]),
+    );
+    const base = {};
+    subjects.forEach((sub) => {
+      const s = bySubjectId[sub.id];
+      base[sub.id] = s
+        ? { hasExam: true, duration: s.duration ?? 50, isEssay: s.isEssay ?? false, studentCountOverride: null }
+        : { hasExam: false, duration: 50, isEssay: false, studentCountOverride: null };
+    });
+    return base;
+  }, [plan.sessions, subjects]);
+
+  // 최종 examConfig = 베이스라인 + 사용자 override
+  const examConfig = useMemo(() => {
+    const result = { ...sessionBaseline };
+    Object.entries(examOverrides).forEach(([id, override]) => {
+      if (result[id]) result[id] = { ...result[id], ...override };
+    });
+    return result;
+  }, [sessionBaseline, examOverrides]);
+
   const updateConfig = (subjectId, patch) =>
-    setExamConfig((c) => ({ ...c, [subjectId]: { ...c[subjectId], ...patch } }));
+    setExamOverrides((c) => ({
+      ...c,
+      [subjectId]: { ...(sessionBaseline[subjectId] ?? {}), ...c[subjectId], ...patch },
+    }));
 
   // ── 날짜 관리 ──
   const addDay = () =>
@@ -555,10 +578,10 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
           unmatched++;
         }
       });
-      setExamConfig((prev) => {
+      setExamOverrides((prev) => {
         const next = { ...prev };
         Object.entries(updates).forEach(([id, patch]) => {
-          next[id] = { ...next[id], ...patch };
+          next[id] = { ...(sessionBaseline[id] ?? {}), ...prev[id], ...patch };
         });
         return next;
       });
@@ -922,9 +945,11 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
                       }}
                       onChange={(e) => {
                         const checked = e.target.checked;
-                        setExamConfig((prev) => {
+                        setExamOverrides((prev) => {
                           const next = { ...prev };
-                          filteredSubjects.forEach((sub) => { next[sub.id] = { ...next[sub.id], hasExam: checked }; });
+                          filteredSubjects.forEach((sub) => {
+                            next[sub.id] = { ...(sessionBaseline[sub.id] ?? {}), ...prev[sub.id], hasExam: checked };
+                          });
                           return next;
                         });
                       }}
