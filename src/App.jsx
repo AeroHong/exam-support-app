@@ -147,15 +147,25 @@ function App() {
   };
 
   const updateSession = (sessionId, patch) => {
-    planner.setPlan((current) => ({
-      ...current,
-      sessions: current.sessions.map((session) =>
-        session.id === sessionId ? { ...session, ...patch } : session,
-      ),
-    }));
+    planner.setPlan((current) => {
+      const grade = current.sessions.find((s) => s.id === sessionId)?.grade;
+      // 배치 해제(dayId: "")이면 일정·대기실·고사실 확정 cascade 해제
+      const isUnplace = patch.dayId === "";
+      return {
+        ...current,
+        sessions: current.sessions.map((session) =>
+          session.id === sessionId ? { ...session, ...patch } : session,
+        ),
+        ...(isUnplace && grade ? {
+          scheduleConfirmed: { ...(current.scheduleConfirmed ?? {}), [grade]: false },
+          waitingConfirmed: {},
+          roomConfirmed: { ...(current.roomConfirmed ?? {}), [grade]: false },
+        } : {}),
+      };
+    });
   };
 
-  // 세션 배치 변경 → 대기실·고사실 확정 cascade 해제
+  // 세션 배치 변경 → 일정·대기실·고사실 확정 cascade 해제
   const handleMove = (sessionId, nextSlot) => {
     const grade = nextSlot.grade || sessionsById[sessionId]?.grade;
     planner.setPlan((cur) => {
@@ -175,6 +185,7 @@ function App() {
               }
             : s,
         ),
+        scheduleConfirmed: { ...(cur.scheduleConfirmed ?? {}), ...(grade ? { [grade]: false } : {}) },
         waitingConfirmed: {},
         roomConfirmed: { ...(cur.roomConfirmed ?? {}), ...(grade ? { [grade]: false } : {}) },
       };
