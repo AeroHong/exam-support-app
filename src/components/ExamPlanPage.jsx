@@ -143,17 +143,26 @@ function mergeExamConfig(sessions, subjects, prevConfig) {
 }
 
 /** 학교지정: 해당 학년 전체 학생 수 / 학생선택: enrollment 기반 (위탁 학생 제외) */
-function calcAutoCount(subject, students, enrollments) {
+function calcAutoCount(subject, students, enrollments, planSemester) {
   if (subject.category === "학교지정") {
-    return students.filter(
+    let gradeStudents = students.filter(
       (s) => String(s.grade) === String(subject.grade) && s.examStatus !== "delegation",
-    ).length;
+    );
+    // 양학기 운영 과목: 해당 학기에 배정된 학급 학생만 카운트
+    if (subject.semester === "both" && subject.semesterClassMap && planSemester) {
+      const allowedClasses = new Set((subject.semesterClassMap[planSemester] || []).map(Number));
+      gradeStudents = gradeStudents.filter(s => allowedClasses.has(Number(s.classNo)));
+    }
+    return gradeStudents.length;
   }
 
-  // 학생선택: enrollment에 있는 학생 중 위탁이 아닌 학생만 카운트
+  // 학생선택: subjectId 우선, 없으면 과목명+학년으로 매칭 (동일 과목명 다른 학년 중복 방지)
   const enrolledStudentIds = new Set(
     enrollments
-      .filter((e) => e.subjectName === subject.name || e.subjectId === subject.id)
+      .filter((e) =>
+        (e.subjectId && e.subjectId === subject.id) ||
+        (!e.subjectId && e.subjectName === subject.name && Number(e.grade) === Number(subject.grade))
+      )
       .map((e) => e.studentId)
   );
 
@@ -539,6 +548,11 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
     }
   };
 
+  // ── 기본 설정(고사명·학기·날짜·교시)만 저장 ──
+  const handleSaveSettings = () => {
+    onPlanChange({ name: planName, semester, days, periods, sessions: plan.sessions ?? [] });
+  };
+
   // ── 현재 학년 세션 확정 ──
   const handleApply = () => {
     const sessionBySubjectId = Object.fromEntries(plan.sessions.map((s) => [s.subjectId, s]));
@@ -549,11 +563,7 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
       .map((subject) => {
         const cfg      = examConfig[subject.id] ?? {};
         const existing = sessionBySubjectId[subject.id];
-        const autoCount = calcAutoCount(subject, students, enrollments);
-        const studentCount =
-          cfg.studentCountOverride !== null && cfg.studentCountOverride !== undefined
-            ? Number(cfg.studentCountOverride)
-            : autoCount;
+        const studentCount = calcAutoCount(subject, students, enrollments, semester);
         return {
           id:          existing?.id ?? `session-${subject.id}`,
           subjectId:   subject.id,
@@ -579,8 +589,9 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
   };
 
   // ── 파생값 ──
+  // 양학기(semester:"both") 과목은 어느 학기가 선택되어도 포함
   const semesterSubjects = semester
-    ? subjects.filter((s) => s.semester === semester)
+    ? subjects.filter((s) => s.semester === semester || s.semester === "both")
     : subjects;
 
   const subjectsByGrade = semesterSubjects.reduce((acc, subject) => {
@@ -602,15 +613,7 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
   const selectedCount = filteredSubjects.filter((s) => examConfig[s.id]?.hasExam).length;
   const totalStudentCount = filteredSubjects
     .filter((s) => examConfig[s.id]?.hasExam)
-    .reduce((sum, subject) => {
-      const cfg = examConfig[subject.id] ?? {};
-      return (
-        sum +
-        (cfg.studentCountOverride !== null && cfg.studentCountOverride !== undefined
-          ? Number(cfg.studentCountOverride)
-          : calcAutoCount(subject, students, enrollments))
-      );
-    }, 0);
+    .reduce((sum, subject) => sum + calcAutoCount(subject, students, enrollments, semester), 0);
 
   const renderRows = () =>
     filteredSubjects.map((subject) => (
@@ -620,6 +623,7 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
         config={examConfig[subject.id] ?? { hasExam: false, duration: 50, isEssay: false, studentCountOverride: null }}
         students={students}
         enrollments={enrollments}
+        planSemester={semester}
         onConfigChange={(patch) => updateConfig(subject.id, patch)}
         onNameClick={() => setModalSubject(subject)}
       />
@@ -808,6 +812,13 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
                 학년마다 시작 시각이 같으면 동일하게 입력하세요. 시험 시간은 과목별로 아래에서 설정합니다.
               </p>
             </div>
+
+            {/* 설정 저장 버튼 */}
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "0.75rem" }}>
+              <button style={s.primaryBtn} onClick={handleSaveSettings}>
+                기본 설정 저장
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -933,37 +944,8 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
 
 // ─── 과목 행 컴포넌트 ─────────────────────────────────────────────────────────
 
-function SubjectRow({ subject, config, students, enrollments, onConfigChange, onNameClick }) {
-  const autoCount = calcAutoCount(subject, students, enrollments);
-
-  // 로컬 문자열 상태 — 입력 중 스냅백 없이 자유롭게 편집 가능
-  const [localCount, setLocalCount] = useState(
-    config.studentCountOverride !== null ? String(config.studentCountOverride) : String(autoCount),
-  );
-
-  // 외부(config/autoCount) 변경 시 동기화
-  useEffect(() => {
-    setLocalCount(
-      config.studentCountOverride !== null ? String(config.studentCountOverride) : String(autoCount),
-    );
-  }, [config.studentCountOverride, autoCount]);
-
-  function handleCountChange(e) {
-    const raw = e.target.value;
-    setLocalCount(raw);
-    const n = Number(raw);
-    if (raw !== "" && !isNaN(n) && n >= 0) {
-      onConfigChange({ studentCountOverride: n });
-    }
-  }
-
-  function handleCountBlur() {
-    const n = Number(localCount);
-    if (localCount === "" || isNaN(n) || n < 0) {
-      setLocalCount(String(autoCount));
-      onConfigChange({ studentCountOverride: null });
-    }
-  }
+function SubjectRow({ subject, config, students, enrollments, planSemester, onConfigChange, onNameClick }) {
+  const autoCount = calcAutoCount(subject, students, enrollments, planSemester);
 
   return (
     <tr style={s.tr}>
@@ -977,19 +959,10 @@ function SubjectRow({ subject, config, students, enrollments, onConfigChange, on
       </td>
       <td style={s.tdCenter}>{subject.credits ?? subject.baseCredits ?? "-"}</td>
       <td style={s.tdCenter}>
-        <input
-          type="number"
-          min={0}
-          style={{
-            ...s.inputSm,
-            // override 중이면 테두리 강조
-            borderColor: config.studentCountOverride !== null ? "#4f46e5" : "#d1d5db",
-          }}
-          value={localCount}
-          onChange={handleCountChange}
-          onBlur={handleCountBlur}
-          title={config.studentCountOverride !== null ? `자동: ${autoCount}명 (수동 수정됨)` : `자동 계산: ${autoCount}명`}
-        />
+        <span style={{ ...s.inputSm, display: "inline-flex", alignItems: "center", justifyContent: "center", backgroundColor: "#f9fafb", border: "1px solid #e5e7eb", color: "#111827", userSelect: "none" }}
+          title="기초 데이터(학생 명렬·수강 신청)에서 자동 계산">
+          {autoCount}
+        </span>
       </td>
       <td style={s.tdCenter}>
         <input

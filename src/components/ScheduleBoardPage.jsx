@@ -91,10 +91,11 @@ const s = {
   palCardMeta: { fontSize: "0.68rem", color: "#6b7280", marginTop: "0.08rem" },
 
   // 세션 카드 — 보드 내
-  boardCard:   (isConflict) => ({
+  boardCard:   (isConflict, isManual) => ({
     padding: "0.28rem 0.35rem",
     backgroundColor: isConflict ? "#fef2f2" : "#eef2ff",
     border: `1px solid ${isConflict ? "#fca5a5" : "#c7d2fe"}`,
+    borderLeft: isConflict ? "3px solid #ef4444" : isManual ? "3px solid #f59e0b" : "1px solid #c7d2fe",
     borderRadius: "6px",
     cursor: "grab",
     position: "relative",
@@ -106,6 +107,17 @@ const s = {
 
   badgeReq:    { fontSize: "0.58rem", fontWeight: 700, backgroundColor: "#dbeafe", color: "#1d4ed8", borderRadius: "3px", padding: "0 0.28rem", marginRight: "2px" },
   badgeEssay:  { fontSize: "0.58rem", fontWeight: 700, backgroundColor: "#fef9c3", color: "#713f12", borderRadius: "3px", padding: "0 0.28rem" },
+  badgeManual: { fontSize: "0.55rem", fontWeight: 700, backgroundColor: "#fef3c7", color: "#92400e", borderRadius: "3px", padding: "0 0.25rem", marginRight: "2px" },
+
+  // 선택과목 교차 행렬
+  matrixSection:    { border: "1px solid #e5e7eb", borderRadius: "10px", backgroundColor: "#f9fafb", padding: "0.75rem 1rem", flexShrink: 0 },
+  matrixHeader:     { fontSize: "0.8rem", fontWeight: 700, color: "#374151", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.5rem" },
+  matrixWrap:       { overflowX: "auto" },
+  matrixTable:      { borderCollapse: "collapse", fontSize: "0.68rem" },
+  matrixRowHead:    { padding: "0.22rem 0.5rem", fontWeight: 600, color: "#374151", border: "1px solid #e5e7eb", textAlign: "left", whiteSpace: "nowrap", maxWidth: "90px", overflow: "hidden", textOverflow: "ellipsis", backgroundColor: "#f3f4f6" },
+  matrixColHead:    { padding: "0.22rem 0.3rem", fontWeight: 600, color: "#374151", border: "1px solid #e5e7eb", textAlign: "center", width: "60px", wordBreak: "keep-all", whiteSpace: "normal", lineHeight: 1.3, verticalAlign: "bottom", backgroundColor: "#f3f4f6" },
+  matrixCell:       (bg, isTextDark) => ({ padding: "0.2rem 0.35rem", border: "1px solid #e5e7eb", textAlign: "center", backgroundColor: bg, color: isTextDark ? "#1e1b4b" : "#6b7280", fontWeight: 600, minWidth: "38px" }),
+  matrixLegend:     { display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.5rem", fontSize: "0.68rem", color: "#6b7280" },
 
   // 자동 배치 미리보기 패널
   previewPanel: { border: "1px solid #e5e7eb", borderRadius: "10px", backgroundColor: "#f9fafb", padding: "0.75rem 1rem", flexShrink: 0 },
@@ -144,6 +156,26 @@ const s = {
   modalCount:   { padding: "0.4rem 1rem 0.25rem", fontSize: "0.72rem", color: "#6b7280", borderBottom: "1px solid #f3f4f6", flexShrink: 0 },
 };
 
+// ── 유틸 ─────────────────────────────────────────────────────────────────────
+
+function overlapSize(setA, setB) {
+  if (!setA || !setB) return 0;
+  let n = 0;
+  for (const id of setA) { if (setB.has(id)) n++; }
+  return n;
+}
+
+// 0 → 파랑(#dbeafe), max → 빨강(#fecaca) 선형 보간
+function heatColor(value, max) {
+  if (value < 0) return "#f3f4f6"; // 대각선
+  if (max === 0 || value === 0) return "#dbeafe";
+  const t = Math.min(value / max, 1);
+  const r = Math.round(219 + (254 - 219) * t);
+  const g = Math.round(234 + (202 - 234) * t);
+  const b = Math.round(254 + (202 - 254) * t);
+  return `rgb(${r},${g},${b})`;
+}
+
 // ── 메인 컴포넌트 ─────────────────────────────────────────────────────────────
 
 export default function ScheduleBoardPage({
@@ -160,6 +192,8 @@ export default function ScheduleBoardPage({
   const [editingLabel, setEditingLabel] = useState("");
   const [previews, setPreviews]       = useState(null);        // 자동배치 미리보기
   const [modal, setModal]             = useState(null);        // 학생 명단 모달
+  const [manuallyPlacedIds, setManuallyPlacedIds] = useState(new Set()); // 수동 배치 세션 ID 추적
+  const [matrixOpen, setMatrixOpen] = useState(true);
 
   // 현재 학년 세션
   const gradeSessions = useMemo(
@@ -181,6 +215,26 @@ export default function ScheduleBoardPage({
   const unplaced = useMemo(
     () => gradeSessions.filter((s) => !s.dayId || !s.periodId),
     [gradeSessions],
+  );
+
+  // 선택과목 교차 행렬
+  const electiveSessions = useMemo(
+    () => gradeSessions.filter((s) => !s.isRequired),
+    [gradeSessions],
+  );
+
+  const conflictMatrix = useMemo(() => {
+    return electiveSessions.map((a) =>
+      electiveSessions.map((b) => {
+        if (a.id === b.id) return -1;
+        return overlapSize(studentSets[a.id], studentSets[b.id]);
+      }),
+    );
+  }, [electiveSessions, studentSets]);
+
+  const maxOverlap = useMemo(
+    () => Math.max(0, ...conflictMatrix.flat().filter((v) => v >= 0)),
+    [conflictMatrix],
   );
 
   // 날짜별 통계
@@ -222,6 +276,7 @@ export default function ScheduleBoardPage({
     const period  = periods.find((p) => p.id === periodId);
     const startTime = period?.startTimes?.[gradeFilter] ?? "08:30";
     onMove(dragId, { dayId, periodId, grade: gradeFilter, startTime, duration: session?.duration, dateLabel: day?.label ?? "" });
+    setManuallyPlacedIds((prev) => new Set([...prev, dragId]));
     setDragId(null);
     setDragOver(null);
   }
@@ -229,11 +284,28 @@ export default function ScheduleBoardPage({
   function handleDropToPalette() {
     if (!dragId) return;
     onSessionChange(dragId, { dayId: "", periodId: "", dateLabel: "미배치", startTime: "" });
+    setManuallyPlacedIds((prev) => { const next = new Set(prev); next.delete(dragId); return next; });
     setDragId(null);
     setDragOver(null);
   }
 
+  function handleRemoveFromBoard(sessionId) {
+    onSessionChange(sessionId, { dayId: "", periodId: "", dateLabel: "미배치", startTime: "" });
+    setManuallyPlacedIds((prev) => { const next = new Set(prev); next.delete(sessionId); return next; });
+  }
+
+  function handleResetAutoPlaced() {
+    const autoPlaced = gradeSessions.filter((s) => s.dayId && s.periodId && !manuallyPlacedIds.has(s.id));
+    if (autoPlaced.length === 0) { alert("초기화할 자동 배치 세션이 없습니다."); return; }
+    const manualCount = gradeSessions.filter((s) => s.dayId && s.periodId && manuallyPlacedIds.has(s.id)).length;
+    if (!window.confirm(`자동 배치 ${autoPlaced.length}개를 초기화합니다.\n수동 배치 ${manualCount}개는 유지됩니다.`)) return;
+    autoPlaced.forEach((s) => onSessionChange(s.id, { dayId: "", periodId: "", dateLabel: "미배치", startTime: "" }));
+    setPreviews(null);
+  }
+
   function applyResult(result) {
+    const autoIds = new Set(Object.keys(result));
+    setManuallyPlacedIds((prev) => { const next = new Set(prev); autoIds.forEach((id) => next.delete(id)); return next; });
     for (const [sessionId, { dayId, periodId }] of Object.entries(result)) {
       const session = sessions.find((s) => s.id === sessionId);
       const day     = days.find((d) => d.id === dayId);
@@ -339,16 +411,32 @@ export default function ScheduleBoardPage({
           );
         })()}
         <div style={s.sep} />
-        <button style={s.primaryBtn} onClick={handlePreview} disabled={unplaced.length === 0}>
-          자동 배치 미리보기 ({unplaced.length}개)
+        {(() => {
+          const manualCount = gradeSessions.filter(s => s.dayId && s.periodId && manuallyPlacedIds.has(s.id)).length;
+          return (
+            <>
+              {manualCount > 0 && (
+                <span style={{ fontSize: "0.75rem", color: "#92400e", backgroundColor: "#fef3c7", border: "1px solid #fde68a", borderRadius: "6px", padding: "0.2rem 0.55rem", fontWeight: 600, flexShrink: 0 }}>
+                  수동 {manualCount}개 유지
+                </span>
+              )}
+              <button style={s.primaryBtn} onClick={handlePreview} disabled={unplaced.length === 0}>
+                {unplaced.length === 0 ? "모두 배치됨" : `나머지 ${unplaced.length}개 자동 배치`}
+              </button>
+              {previews && (
+                <button style={s.outlineBtn} onClick={() => setPreviews(null)}>미리보기 닫기</button>
+              )}
+            </>
+          );
+        })()}
+        <button style={s.dangerBtn} onClick={handleResetAutoPlaced}>
+          자동배치 초기화
         </button>
-        {previews && (
-          <button style={s.outlineBtn} onClick={() => setPreviews(null)}>미리보기 닫기</button>
-        )}
         <button style={s.dangerBtn}
           onClick={() => {
             if (!window.confirm(`${gradeFilter}학년 배치를 모두 초기화하시겠습니까?\n초기화 후 즉시 저장됩니다.`)) return;
             onResetPlacements?.(gradeFilter);
+            setManuallyPlacedIds(new Set());
             setPreviews(null);
           }}
         >
@@ -461,10 +549,11 @@ export default function ScheduleBoardPage({
                       {cellSessions.map((session) => (
                         <SessionCard key={session.id} session={session} variant="board"
                           isConflict={conflictsInSlot.has(session.id)}
+                          isManual={manuallyPlacedIds.has(session.id)}
                           isDragging={dragId === session.id}
                           onDragStart={() => setDragId(session.id)}
                           onDragEnd={() => setDragId(null)}
-                          onRemove={() => onSessionChange(session.id, { dayId: "", periodId: "", dateLabel: "미배치", startTime: "" })}
+                          onRemove={() => handleRemoveFromBoard(session.id)}
                         />
                       ))}
                       {pStat && (pStat.testingCount > 0 || pStat.waitingCount > 0) && (
@@ -559,6 +648,74 @@ export default function ScheduleBoardPage({
               </div>
             </div>
           )}
+        {/* ── 선택과목 수강생 교차 행렬 ── */}
+        {electiveSessions.length >= 2 && (
+          <div style={s.matrixSection}>
+            <div style={s.matrixHeader}>
+              <span>선택과목 수강생 교차 현황</span>
+              <button style={{ ...s.outlineBtn, padding: "0.18rem 0.6rem", fontSize: "0.72rem" }}
+                onClick={() => setMatrixOpen((o) => !o)}>
+                {matrixOpen ? "▲ 접기" : "▼ 펼치기"}
+              </button>
+            </div>
+            {matrixOpen && (
+              <div style={{ display: "flex", gap: "1.5rem", alignItems: "flex-start" }}>
+                {/* 표 */}
+                <div style={{ ...s.matrixWrap, flex: 1, minWidth: 0 }}>
+                  <table style={s.matrixTable}>
+                    <thead>
+                      <tr>
+                        <th style={{ ...s.matrixRowHead, minWidth: "90px" }} />
+                        {electiveSessions.map((sess) => (
+                          <th key={sess.id} style={s.matrixColHead}>
+                            {sess.subjectName}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {electiveSessions.map((rowSess, ri) => (
+                        <tr key={rowSess.id}>
+                          <td style={s.matrixRowHead} title={rowSess.subjectName}>
+                            {rowSess.subjectName}
+                          </td>
+                          {conflictMatrix[ri].map((val, ci) => {
+                            const bg = heatColor(val, maxOverlap);
+                            return (
+                              <td key={electiveSessions[ci].id}
+                                style={s.matrixCell(bg, val > 0)}
+                                title={val >= 0 ? `${rowSess.subjectName} ∩ ${electiveSessions[ci].subjectName}: ${val}명` : ""}>
+                                {val < 0 ? "—" : val}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* 오른쪽 설명 */}
+                <div style={{ flexShrink: 0, width: "220px", fontSize: "0.75rem", color: "#374151", lineHeight: 1.6, backgroundColor: "#fff", border: "1px solid #e5e7eb", borderRadius: "8px", padding: "0.75rem 0.9rem" }}>
+                  <p style={{ fontWeight: 700, marginBottom: "0.5rem", color: "#111827" }}>숫자의 의미</p>
+                  <div style={{ display: "flex", gap: "0.4rem", marginBottom: "0.5rem" }}>
+                    <span style={{ display: "inline-block", width: "14px", height: "14px", backgroundColor: "#dbeafe", border: "1px solid #bfdbfe", borderRadius: "3px", flexShrink: 0, marginTop: "2px" }} />
+                    <p style={{ margin: 0, color: "#1d4ed8", fontWeight: 600 }}>0 — 두 과목을 동시에 시험봐도 됩니다.</p>
+                  </div>
+                  <div style={{ display: "flex", gap: "0.4rem", marginBottom: "0.5rem" }}>
+                    <span style={{ display: "inline-block", width: "14px", height: "14px", backgroundColor: "#fecaca", border: "1px solid #fca5a5", borderRadius: "3px", flexShrink: 0, marginTop: "2px" }} />
+                    <p style={{ margin: 0, color: "#dc2626", fontWeight: 600 }}>숫자가 클수록 — 두 과목을 모두 선택한 학생이 많으므로 같은 날 시험은 피해야 합니다.</p>
+                  </div>
+                  <div style={{ display: "flex", gap: "0.4rem" }}>
+                    <span style={{ display: "inline-block", width: "14px", height: "14px", background: "linear-gradient(135deg, #dbeafe 50%, #fecaca 50%)", border: "1px solid #e5e7eb", borderRadius: "3px", flexShrink: 0, marginTop: "2px" }} />
+                    <p style={{ margin: 0, color: "#6b7280" }}>숫자가 작을수록 — 두 과목을 모두 선택한 학생이 적으므로 같은 날 시험을 권장합니다.</p>
+                  </div>
+                  <p style={{ marginTop: "0.6rem", marginBottom: 0, color: "#9ca3af", fontSize: "0.68rem" }}>이 학년 최대 중복: {maxOverlap}명</p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         </div>
       </div>
     </div>
@@ -598,7 +755,7 @@ export default function ScheduleBoardPage({
 
 // ── 세션 카드 컴포넌트 ────────────────────────────────────────────────────────
 
-function SessionCard({ session, variant, isConflict, isDragging, onDragStart, onDragEnd, onRemove }) {
+function SessionCard({ session, variant, isConflict, isManual, isDragging, onDragStart, onDragEnd, onRemove }) {
   if (variant === "palette") {
     return (
       <div draggable style={s.palCard(isDragging)} onDragStart={onDragStart} onDragEnd={onDragEnd}>
@@ -616,7 +773,7 @@ function SessionCard({ session, variant, isConflict, isDragging, onDragStart, on
   const endTime   = startTime ? addMinutes(startTime, session.duration ?? 50) : "";
 
   return (
-    <div draggable style={s.boardCard(isConflict)} onDragStart={onDragStart} onDragEnd={onDragEnd}>
+    <div draggable style={s.boardCard(isConflict, isManual)} onDragStart={onDragStart} onDragEnd={onDragEnd}>
       {onRemove && <button style={s.removeBtn} onClick={onRemove} title="배치 취소">✕</button>}
       <p style={s.boardCardName}>
         {isConflict && <span style={s.conflictDot} title="수강생 중복 충돌" />}
@@ -625,12 +782,11 @@ function SessionCard({ session, variant, isConflict, isDragging, onDragStart, on
       <p style={s.boardCardMeta}>
         {session.studentCount ?? 0}명{startTime ? ` · ${startTime}–${endTime}` : ""}
       </p>
-      {(session.isRequired || session.isEssay) && (
-        <div>
-          {session.isRequired && <span style={s.badgeReq}>지정</span>}
-          {session.isEssay    && <span style={s.badgeEssay}>서논술</span>}
-        </div>
-      )}
+      <div style={{ marginTop: "0.12rem" }}>
+        {isManual    && <span style={s.badgeManual}>수동</span>}
+        {session.isRequired && <span style={s.badgeReq}>지정</span>}
+        {session.isEssay    && <span style={s.badgeEssay}>서논술</span>}
+      </div>
     </div>
   );
 }

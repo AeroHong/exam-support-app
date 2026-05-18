@@ -4,6 +4,7 @@ import {
   bulkSaveSubjectsByYear,
   deleteSubject,
   deleteSubjectsByYear,
+  loadStudents,
   loadSubjects,
   saveSubject,
 } from "../lib/firestoreData";
@@ -94,6 +95,13 @@ function extractEntryYear(filename) {
 function scheduleLabel(subject) {
   if (!subject.category) return "—";
   if (subject.category === "학교지정") {
+    if (subject.semester === "both") {
+      const map = subject.semesterClassMap || {};
+      const s1 = (map[1] || []).map(c => `${c}반`).join("·");
+      const s2 = (map[2] || []).map(c => `${c}반`).join("·");
+      const detail = (s1 || s2) ? ` (1학기:${s1 || "—"} / 2학기:${s2 || "—"})` : "";
+      return `${subject.grade}학년 1·2학기${detail}`;
+    }
     return `${subject.grade}학년 ${subject.semester}학기`;
   }
   if (subject.selectionBlock) {
@@ -272,7 +280,7 @@ function parseEducationExcel(arrayBuffer, targetGrade) {
 
 // ─── SubjectModal (추가/수정) ──────────────────────────────────────────────────
 
-function SubjectModal({ subject, onClose, onSave }) {
+function SubjectModal({ subject, onClose, onSave, classesByGrade }) {
   const isEdit = Boolean(subject?.id);
   const curYear = new Date().getFullYear();
 
@@ -284,6 +292,7 @@ function SubjectModal({ subject, onClose, onSave }) {
     category: subject.category || "학교지정",
     grade: subject.grade || 1,
     semester: subject.semester || 1,
+    semesterClassMap: subject.semesterClassMap || null,
     credits: subject.credits || 3,
     baseCredits: subject.baseCredits || 4,
     selectionBlock: subject.selectionBlock || null,
@@ -297,6 +306,7 @@ function SubjectModal({ subject, onClose, onSave }) {
     category: "학교지정",
     grade: 1,
     semester: 1,
+    semesterClassMap: null,
     credits: 3,
     baseCredits: 4,
     selectionBlock: null,
@@ -316,7 +326,31 @@ function SubjectModal({ subject, onClose, onSave }) {
         ? { grade: 2, semester: 1, pickCount: 5, blockNumber: 1 }
         : null,
       grade: cat === "학교지정" ? (p.grade || 1) : (p.selectionBlock?.grade || 2),
+      semesterClassMap: null,
     }));
+  }
+
+  // 양학기 학급 배정 헬퍼
+  const availableClasses = classesByGrade?.[form.grade] || [];
+
+  function getClassSemester(cls) {
+    const map = form.semesterClassMap || {};
+    if ((map[1] || []).includes(cls)) return 1;
+    if ((map[2] || []).includes(cls)) return 2;
+    return null;
+  }
+
+  function setClassSemester(cls, sem) {
+    setForm(p => {
+      const prev = p.semesterClassMap || { 1: [], 2: [] };
+      return {
+        ...p,
+        semesterClassMap: {
+          1: sem === 1 ? [...new Set([...(prev[1] || []), cls])] : (prev[1] || []).filter(c => c !== cls),
+          2: sem === 2 ? [...new Set([...(prev[2] || []), cls])] : (prev[2] || []).filter(c => c !== cls),
+        },
+      };
+    });
   }
 
   function setSb(patch) {
@@ -336,7 +370,8 @@ function SubjectModal({ subject, onClose, onSave }) {
         ...form,
         name: form.name.trim(),
         grade: Number(form.grade),
-        semester: Number(form.semester),
+        semester: form.semester === "both" ? "both" : Number(form.semester),
+        semesterClassMap: form.semester === "both" ? (form.semesterClassMap || { 1: [], 2: [] }) : null,
         credits: Number(form.credits),
         baseCredits: Number(form.baseCredits),
         entryYear: Number(form.entryYear),
@@ -426,18 +461,89 @@ function SubjectModal({ subject, onClose, onSave }) {
                 <div>
                   <label style={s.label}>학년</label>
                   <select style={s.mSelect} value={form.grade}
-                    onChange={e => set("grade", Number(e.target.value))}>
+                    onChange={e => { set("grade", Number(e.target.value)); set("semesterClassMap", null); }}>
                     {[1, 2, 3].map(g => <option key={g} value={g}>{g}학년</option>)}
                   </select>
                 </div>
                 <div>
                   <label style={s.label}>학기</label>
-                  <select style={s.mSelect} value={form.semester}
-                    onChange={e => set("semester", Number(e.target.value))}>
-                    {[1, 2].map(sm => <option key={sm} value={sm}>{sm}학기</option>)}
-                  </select>
+                  <div style={{ display: "flex", gap: "0.4rem" }}>
+                    {[{ val: 1, label: "1학기" }, { val: 2, label: "2학기" }, { val: "both", label: "1·2학기" }].map(opt => (
+                      <button key={opt.val} type="button"
+                        style={{
+                          padding: "0.35rem 0.7rem",
+                          border: `1px solid ${form.semester === opt.val ? "#4f46e5" : "#d1d5db"}`,
+                          borderRadius: "6px",
+                          backgroundColor: form.semester === opt.val ? "#eef2ff" : "#fff",
+                          color: form.semester === opt.val ? "#4f46e5" : "#6b7280",
+                          fontSize: "0.8rem",
+                          fontWeight: form.semester === opt.val ? 700 : 400,
+                          cursor: "pointer",
+                          whiteSpace: "nowrap",
+                        }}
+                        onClick={() => {
+                          set("semester", opt.val);
+                          set("semesterClassMap", opt.val === "both" ? { 1: [], 2: [] } : null);
+                        }}>
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
+
+              {/* 양학기: 학급별 학기 배정 */}
+              {form.semester === "both" && (
+                <div style={{ marginTop: "0.75rem" }}>
+                  <label style={s.label}>학기별 학급 배정</label>
+                  {availableClasses.length === 0 ? (
+                    <p style={{ fontSize: "0.8rem", color: "#9ca3af", margin: 0 }}>
+                      학생 명렬에 {form.grade}학년 학급 정보가 없습니다.
+                    </p>
+                  ) : (
+                    <>
+                      <div style={{ border: "1px solid #bfdbfe", borderRadius: "6px", overflow: "hidden" }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+                          <thead>
+                            <tr style={{ backgroundColor: "#dbeafe" }}>
+                              <th style={{ padding: "0.35rem 0.75rem", textAlign: "left", fontWeight: 700, color: "#1d4ed8" }}>학급</th>
+                              <th style={{ padding: "0.35rem", textAlign: "center", fontWeight: 700, color: "#1d4ed8" }}>1학기</th>
+                              <th style={{ padding: "0.35rem", textAlign: "center", fontWeight: 700, color: "#1d4ed8" }}>2학기</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {availableClasses.map(cls => {
+                              const assigned = getClassSemester(cls);
+                              return (
+                                <tr key={cls} style={{ borderTop: "1px solid #e5e7eb" }}>
+                                  <td style={{ padding: "0.3rem 0.75rem", color: "#374151" }}>{cls}반</td>
+                                  <td style={{ padding: "0.3rem", textAlign: "center" }}>
+                                    <input type="radio" name={`cls-${cls}`}
+                                      checked={assigned === 1}
+                                      onChange={() => setClassSemester(cls, 1)} />
+                                  </td>
+                                  <td style={{ padding: "0.3rem", textAlign: "center" }}>
+                                    <input type="radio" name={`cls-${cls}`}
+                                      checked={assigned === 2}
+                                      onChange={() => setClassSemester(cls, 2)} />
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      {form.semesterClassMap && (
+                        <p style={{ fontSize: "0.78rem", color: "#4f46e5", marginTop: "0.4rem", marginBottom: 0 }}>
+                          1학기: {(form.semesterClassMap[1] || []).map(c => `${c}반`).join("·") || "미배정"}
+                          {" / "}
+                          2학기: {(form.semesterClassMap[2] || []).map(c => `${c}반`).join("·") || "미배정"}
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -516,7 +622,8 @@ function parseSimpleSubjectExcel(arrayBuffer) {
     try {
       const category = (row["구분"] || "").toString().trim();
       const grade = parseInt(row["학년"]) || null;
-      const semester = parseInt(row["학기"]) || null;
+      const semesterRaw = (row["학기"] || "").toString().trim();
+      const semester = semesterRaw === "양학기" ? "both" : (parseInt(semesterRaw) || null);
 
       if (!["학교지정", "학생선택"].includes(category)) {
         errors.push(`행 ${i + 2}: 구분 값이 "학교지정" 또는 "학생선택"이어야 합니다.`);
@@ -527,6 +634,14 @@ function parseSimpleSubjectExcel(arrayBuffer) {
         continue;
       }
 
+      const parseClassList = (val) =>
+        (val || "").toString().split(",").map(v => parseInt(v.trim())).filter(n => !isNaN(n));
+
+      const semesterClassMap = semester === "both" ? {
+        1: parseClassList(row["1학기_학급"]),
+        2: parseClassList(row["2학기_학급"]),
+      } : null;
+
       const course = {
         name,
         subjectCode: (row["과목코드"] || "").toString().trim(),
@@ -535,6 +650,7 @@ function parseSimpleSubjectExcel(arrayBuffer) {
         category,
         grade,
         semester,
+        semesterClassMap,
         credits: parseInt(row["운영학점"]) || 3,
         baseCredits: parseInt(row["기본학점"]) || 4,
         entryYear: parseInt(row["입학년도"]) || new Date().getFullYear(),
@@ -837,8 +953,24 @@ export default function SubjectsTab({ schoolId }) {
   const [editTarget, setEditTarget] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [classesByGrade, setClassesByGrade] = useState({});
 
   useEffect(() => { if (schoolId) fetchSubjects(); }, [schoolId]);
+
+  useEffect(() => {
+    if (!schoolId) return;
+    loadStudents(schoolId).then(students => {
+      const map = {};
+      students.forEach(({ grade, classNo }) => {
+        if (!grade || !classNo) return;
+        if (!map[grade]) map[grade] = new Set();
+        map[grade].add(Number(classNo));
+      });
+      const sorted = {};
+      Object.keys(map).forEach(g => { sorted[Number(g)] = [...map[g]].sort((a, b) => a - b); });
+      setClassesByGrade(sorted);
+    }).catch(() => {});
+  }, [schoolId]);
 
   async function fetchSubjects() {
     setLoading(true);
@@ -895,7 +1027,9 @@ export default function SubjectsTab({ schoolId }) {
       "과목명": s.name || "",
       "과목코드": s.subjectCode || "",
       "학년": s.grade || "",
-      "학기": s.semester || "",
+      "학기": s.semester === "both" ? "양학기" : (s.semester || ""),
+      "1학기_학급": s.semester === "both" ? (s.semesterClassMap?.[1] || []).join(",") : "",
+      "2학기_학급": s.semester === "both" ? (s.semesterClassMap?.[2] || []).join(",") : "",
       "기본학점": s.baseCredits || "",
       "운영학점": s.credits || "",
       "입학년도": s.entryYear || "",
@@ -1063,6 +1197,7 @@ export default function SubjectsTab({ schoolId }) {
           subject={editTarget}
           onClose={() => { setModalOpen(false); setEditTarget(null); }}
           onSave={handleSaveSubject}
+          classesByGrade={classesByGrade}
         />
       )}
 
