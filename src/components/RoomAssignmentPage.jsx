@@ -40,10 +40,10 @@ const s = {
 
   // 용량 바
   barWrap:      { height: "6px", backgroundColor: "#f3f4f6", borderRadius: "999px", marginBottom: "0.5rem", overflow: "hidden" },
-  barFill:      (pct, over) => ({
+  barFill:      (pct, over, softShort) => ({
     height: "100%",
     width: `${Math.min(pct, 100)}%`,
-    backgroundColor: over ? "#dc2626" : pct >= 100 ? "#15803d" : "#4f46e5",
+    backgroundColor: over ? "#dc2626" : softShort ? "#f59e0b" : pct >= 100 ? "#15803d" : "#4f46e5",
     borderRadius: "999px",
     transition: "width 0.3s",
   }),
@@ -85,6 +85,7 @@ const s = {
 
 export default function RoomAssignmentPage({
   sessions, rooms, students, enrollments,
+  examPlanReady, scheduleConfirmed,
   onUpdateRoomIds, onUpdateAllRoomIds,
   roomConfirmed, onConfirmRoom, onDeconfirmRoom,
 }) {
@@ -121,6 +122,10 @@ export default function RoomAssignmentPage({
     () => Object.fromEntries(rooms.map((r) => [r.id, r])),
     [rooms],
   );
+
+  // 소수 정원 초과 허용 임계값 — 이 이하면 "정원 초과 운영"으로 표시
+  // (subjectRosterGenerator가 마지막 방 오버플로를 자동 처리하므로 출력물은 정상)
+  const SOFT_OVERFLOW_MAX = 5;
 
   // 배정된 방 총 용량 계산
   function assignedCapacity(session) {
@@ -244,7 +249,17 @@ export default function RoomAssignmentPage({
     );
   }
 
+  const scheduleNotReady = ["1", "2", "3"].filter(
+    (g) => sessions.some((s) => String(s.grade) === g) && !scheduleConfirmed?.[g],
+  );
+
   return (
+    <>
+    {scheduleNotReady.length > 0 && (
+      <div style={{ padding: "0.55rem 1.5rem", backgroundColor: "#fff7ed", color: "#b45309", borderBottom: "1px solid #fed7aa", fontSize: "0.82rem", fontWeight: 600 }}>
+        ⚠ {scheduleNotReady.join(", ")}학년 일정 배치 확정이 필요합니다. 일정 배치 탭에서 확정 후 진행하세요.
+      </div>
+    )}
     <div style={s.page}>
       {/* ── 헤더 ── */}
       <div style={s.pageHeader}>
@@ -305,10 +320,12 @@ export default function RoomAssignmentPage({
           {gradeSessions.map((session) => {
             const conflictRooms = conflictRoomsBySession[session.id];
             const hasConflict   = conflictRooms && conflictRooms.size > 0;
-            const cap    = assignedCapacity(session);
-            const count  = session.studentCount ?? 0;
-            const pct    = count > 0 ? (cap / count) * 100 : 0;
-            const over   = cap > count + 5;
+            const cap      = assignedCapacity(session);
+            const count    = session.studentCount ?? 0;
+            const shortage = Math.max(0, count - cap);
+            const pct      = count > 0 ? (cap / count) * 100 : 0;
+            const over     = cap > count + 5;
+            const softShort = shortage > 0 && shortage <= SOFT_OVERFLOW_MAX;
             const pickerOpen = openPicker === session.id;
             // 선택과목 상태 분류
             const isUnscheduled = !session.isRequired && (!session.dayId || !session.periodId);
@@ -335,7 +352,7 @@ export default function RoomAssignmentPage({
 
                 {/* 용량 바 */}
                 <div style={s.barWrap}>
-                  <div style={s.barFill(pct, over)} />
+                  <div style={s.barFill(pct, over, softShort)} />
                 </div>
                 <p style={s.barLabel}>
                   {cap === 0
@@ -344,6 +361,8 @@ export default function RoomAssignmentPage({
                     ? `정원 초과 (배정 ${cap}명 / 응시 ${count}명)`
                     : cap >= count
                     ? `배정 완료 (${cap}명 수용)`
+                    : softShort
+                    ? `정원 초과 운영 — ${shortage}명 추가배치 (책상 추가)`
                     : `부족 (배정 ${cap}명 / 필요 ${count}명)`}
                 </p>
 
@@ -414,6 +433,7 @@ export default function RoomAssignmentPage({
         <StatusPanel />
       </div>
     </div>
+    </>
   );
 }
 

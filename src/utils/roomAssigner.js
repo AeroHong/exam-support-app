@@ -148,6 +148,14 @@ function assignElective(session, gradeClassRooms, extraRooms, usedRoomIds, poolP
   // 학급 교실로도 부족하면 추가 고사실 사용 (인원수 무관)
   if (remaining > 0) {
     const allUsed = new Set([...usedRoomIds, ...assignedRooms.map((r) => r.id)]);
+
+    // 소수(≤5명) 초과 — 마지막 방에 책상 추가 방식으로 흡수
+    // subjectRosterGenerator.autoAssignToRooms가 마지막 방 오버플로를 자동 처리함
+    if (remaining <= 5 && assignedRooms.length > 0) {
+      const nextPointer = poolPointer + assignedRooms.filter(isClassRoom).length;
+      return { roomIds: assignedRooms.map((r) => r.id), nextPointer };
+    }
+
     if (remaining <= 10) {
       // 마지막 교실과 통합 시도
       const consolidated = tryConsolidate(assignedRooms, remaining, extraRooms, allUsed);
@@ -163,6 +171,12 @@ function assignElective(session, gradeClassRooms, extraRooms, usedRoomIds, poolP
       assignedRooms.push(r);
       allUsed.add(r.id);
       remaining -= r.capacity;
+    }
+
+    // 추가 고사실도 소진 후 잔여가 ≤5명이면 마지막 방 오버플로 허용
+    if (remaining > 0 && remaining <= 5 && assignedRooms.length > 0) {
+      const nextPointer = poolPointer + assignedRooms.filter(isClassRoom).length;
+      return { roomIds: assignedRooms.map((r) => r.id), nextPointer };
     }
   }
 

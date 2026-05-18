@@ -6,6 +6,7 @@ import LoginScreen from "./components/LoginScreen";
 import PrintManagementPage from "./components/PrintManagementPage";
 import RoomAssignmentPage from "./components/RoomAssignmentPage";
 import ScheduleBoardPage from "./components/ScheduleBoardPage";
+import WaitingRoomAssignmentPage from "./components/WaitingRoomAssignmentPage";
 import StudentListModal from "./components/StudentListModal";
 import SuperAdminPage from "./components/SuperAdminPage";
 import VersionBrowserModal from "./components/VersionBrowserModal";
@@ -14,10 +15,49 @@ import { usePlannerData } from "./hooks/usePlannerData";
 import { useScheduleEngine } from "./hooks/useScheduleEngine";
 import { useTenantData } from "./hooks/useTenantData";
 
+/**
+ * 단계별 확정 chain 검증
+ * 시험계획(세션 존재) → 일정 확정 → 고사실 확정
+ *                    → 대기실 확정
+ * 앞 단계가 미확정이면 뒤 단계 확정을 자동 해제
+ */
+function validateConfirmationChain(plan) {
+  const sc = { ...(plan.scheduleConfirmed ?? {}) };
+  const wc = { ...(plan.waitingConfirmed  ?? {}) };
+  const rc = { ...(plan.roomConfirmed     ?? {}) };
+  let changed = false;
+
+  ["1", "2", "3"].forEach((grade) => {
+    const hasSessions = plan.sessions.some((s) => String(s.grade) === grade);
+
+    if (!hasSessions) {
+      // 시험계획 미확정 → 일정·고사실 모두 해제
+      if (sc[grade]) { sc[grade] = false; changed = true; }
+      if (rc[grade]) { rc[grade] = false; changed = true; }
+    } else if (!sc[grade]) {
+      // 일정 미확정 → 고사실 해제
+      if (rc[grade]) { rc[grade] = false; changed = true; }
+    }
+  });
+
+  // 대기실: 세션이 있는 학년 중 일정 미확정인 학년이 하나라도 있으면 전체 해제
+  const anyScheduleGap = ["1", "2", "3"].some(
+    (g) => plan.sessions.some((s) => String(s.grade) === g) && !sc[g],
+  );
+  if (anyScheduleGap) {
+    Object.keys(wc).forEach((k) => {
+      if (wc[k]) { wc[k] = false; changed = true; }
+    });
+  }
+
+  return changed ? { scheduleConfirmed: sc, waitingConfirmed: wc, roomConfirmed: rc } : null;
+}
+
 const PAGES = [
   { key: "data",     label: "기초 데이터" },
   { key: "examplan", label: "시험계획" },
   { key: "schedule", label: "일정 배치" },
+  { key: "waiting",  label: "대기실 배정" },
   { key: "rooms",    label: "고사실 배정" },
   { key: "print",    label: "출력물 관리" },
   { key: "overview", label: "개요" },
@@ -86,6 +126,19 @@ function App() {
     [plan.sessions],
   );
 
+  // 플랜 로드 시 확정 chain 검증 — 앞 단계 미확정이면 뒤 단계 자동 해제
+  const validatedPlanIdRef = useRef(null);
+  useEffect(() => {
+    if (!plan.id || plan.id === validatedPlanIdRef.current) return;
+    validatedPlanIdRef.current = plan.id;
+    const corrected = validateConfirmationChain(plan);
+    if (corrected) {
+      planner.setPlan((cur) => ({ ...cur, ...corrected }));
+    }
+  // plan.id가 바뀔 때(로드/버전 복원)만 실행
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan.id]);
+
   const setSessions = (updater) => {
     planner.setPlan((current) => ({
       ...current,
@@ -102,15 +155,29 @@ function App() {
     }));
   };
 
+  // 세션 배치 변경 → 대기실·고사실 확정 cascade 해제
   const handleMove = (sessionId, nextSlot) => {
-    const nextDay = plan.days.find((day) => day.id === nextSlot.dayId);
-    updateSession(sessionId, {
-      dayId: nextSlot.dayId,
-      grade: nextSlot.grade,
-      periodId: nextSlot.periodId ?? sessionsById[sessionId].periodId,
-      startTime: nextSlot.startTime,
-      duration: nextSlot.duration ?? sessionsById[sessionId].duration,
-      dateLabel: nextSlot.dateLabel ?? nextDay?.label ?? sessionsById[sessionId].dateLabel,
+    const grade = nextSlot.grade || sessionsById[sessionId]?.grade;
+    planner.setPlan((cur) => {
+      const nextDay = cur.days.find((d) => d.id === nextSlot.dayId);
+      return {
+        ...cur,
+        sessions: cur.sessions.map((s) =>
+          s.id === sessionId
+            ? {
+                ...s,
+                dayId:     nextSlot.dayId,
+                grade:     nextSlot.grade,
+                periodId:  nextSlot.periodId  ?? s.periodId,
+                startTime: nextSlot.startTime,
+                duration:  nextSlot.duration  ?? s.duration,
+                dateLabel: nextSlot.dateLabel ?? nextDay?.label ?? s.dateLabel,
+              }
+            : s,
+        ),
+        waitingConfirmed: {},
+        roomConfirmed: { ...(cur.roomConfirmed ?? {}), ...(grade ? { [grade]: false } : {}) },
+      };
     });
   };
 
@@ -220,12 +287,37 @@ function App() {
     }
   };
 
+  // 학년별 시험계획 확정 여부 (세션 존재 기준)
+  const examPlanReady = useMemo(() => {
+    const r = {};
+    ["1", "2", "3"].forEach((g) => {
+      r[g] = plan.sessions.some((s) => String(s.grade) === g);
+    });
+    return r;
+  }, [plan.sessions]);
+
   const handleConfirmSchedule = (grade) => {
     planner.setPlan((cur) => ({ ...cur, scheduleConfirmed: { ...(cur.scheduleConfirmed ?? {}), [grade]: true } }));
   };
   const handleDeconfirmSchedule = (grade) => {
     planner.setPlan((cur) => ({ ...cur, scheduleConfirmed: { ...(cur.scheduleConfirmed ?? {}), [grade]: false } }));
   };
+  const handleConfirmExamPlan = (grade) => {
+    planner.setPlan((cur) => ({
+      ...cur,
+      examPlanConfirmed: { ...(cur.examPlanConfirmed ?? {}), [grade]: true },
+    }));
+  };
+  const handleDeconfirmExamPlan = (grade) => {
+    planner.setPlan((cur) => ({
+      ...cur,
+      examPlanConfirmed: { ...(cur.examPlanConfirmed ?? {}), [grade]: false },
+      scheduleConfirmed: { ...(cur.scheduleConfirmed ?? {}), [grade]: false },
+      waitingConfirmed: {},
+      roomConfirmed: { ...(cur.roomConfirmed ?? {}), [grade]: false },
+    }));
+  };
+
   const handleConfirmRoom = (grade) => {
     planner.setPlan((cur) => ({ ...cur, roomConfirmed: { ...(cur.roomConfirmed ?? {}), [grade]: true } }));
   };
@@ -233,26 +325,50 @@ function App() {
     planner.setPlan((cur) => ({ ...cur, roomConfirmed: { ...(cur.roomConfirmed ?? {}), [grade]: false } }));
   };
 
-  // 학년 배치 초기화 — 단일 업데이트 후 Firestore 즉시 저장
+  const handleUpdateWaitingAssignments = (periodKey, assignments) => {
+    planner.setPlan((cur) => ({
+      ...cur,
+      waitingAssignments: { ...(cur.waitingAssignments ?? {}), [periodKey]: assignments },
+    }));
+  };
+  const handleConfirmWaiting = (periodKey) => {
+    planner.setPlan((cur) => ({ ...cur, waitingConfirmed: { ...(cur.waitingConfirmed ?? {}), [periodKey]: true } }));
+  };
+  const handleDeconfirmWaiting = (periodKey) => {
+    planner.setPlan((cur) => ({ ...cur, waitingConfirmed: { ...(cur.waitingConfirmed ?? {}), [periodKey]: false } }));
+  };
+
+  // 학년 배치 초기화 → 해당 학년 모든 확정 cascade 해제
   const resetGradePlacements = (grade) => {
-    const cleared = {
-      ...plan,
-      sessions: plan.sessions.map((s) =>
+    planner.setPlan((cur) => ({
+      ...cur,
+      sessions: cur.sessions.map((s) =>
         String(s.grade) === String(grade)
           ? { ...s, dayId: "", periodId: "", dateLabel: "미배치", startTime: "" }
           : s,
       ),
-    };
-    planner.setPlan(cleared);
-    planner.savePlan(cleared);
+      scheduleConfirmed: { ...(cur.scheduleConfirmed ?? {}), [grade]: false },
+      waitingConfirmed: {},
+      roomConfirmed: { ...(cur.roomConfirmed ?? {}), [grade]: false },
+    }));
   };
 
   const addSession = (session) => {
     setSessions((current) => [...current, session]);
   };
 
+  // 세션 삭제 → 해당 학년 모든 확정 cascade 해제
   const removeSession = (sessionId) => {
-    setSessions((current) => current.filter((session) => session.id !== sessionId));
+    const grade = sessionsById[sessionId]?.grade;
+    planner.setPlan((cur) => ({
+      ...cur,
+      sessions: cur.sessions.filter((s) => s.id !== sessionId),
+      ...(grade ? {
+        scheduleConfirmed: { ...(cur.scheduleConfirmed ?? {}), [grade]: false },
+        waitingConfirmed: {},
+        roomConfirmed: { ...(cur.roomConfirmed ?? {}), [grade]: false },
+      } : {}),
+    }));
   };
 
   const selectedStudents = selectedMetric
@@ -368,6 +484,9 @@ function App() {
             enrollments={effectiveEnrollments}
             studentsLoadedAt={tenantData.loadedAt}
             onReloadStudents={tenantData.reload}
+            examPlanConfirmed={plan.examPlanConfirmed ?? {}}
+            onConfirmExamPlan={handleConfirmExamPlan}
+            onDeconfirmExamPlan={handleDeconfirmExamPlan}
           />
         ) : null}
 
@@ -384,12 +503,30 @@ function App() {
           />
         ) : null}
 
+        {activePage === "waiting" ? (
+          <WaitingRoomAssignmentPage
+            plan={plan}
+            students={effectiveStudents}
+            enrollments={effectiveEnrollments}
+            rooms={tenantData.rooms}
+            subjects={tenantData.subjects ?? []}
+            examPlanReady={examPlanReady}
+            scheduleConfirmed={plan.scheduleConfirmed ?? {}}
+            onUpdateWaitingAssignments={handleUpdateWaitingAssignments}
+            waitingConfirmed={plan.waitingConfirmed ?? {}}
+            onConfirmWaiting={handleConfirmWaiting}
+            onDeconfirmWaiting={handleDeconfirmWaiting}
+          />
+        ) : null}
+
         {activePage === "rooms" ? (
           <RoomAssignmentPage
             sessions={plan.sessions}
             rooms={tenantData.rooms}
             students={effectiveStudents}
             enrollments={effectiveEnrollments}
+            examPlanReady={examPlanReady}
+            scheduleConfirmed={plan.scheduleConfirmed ?? {}}
             onUpdateRoomIds={(sessionId, roomIds) => updateSession(sessionId, { roomIds })}
             onUpdateAllRoomIds={(patch) =>
               planner.setPlan((cur) => ({
@@ -412,6 +549,7 @@ function App() {
             sessions={plan.sessions}
             students={effectiveStudents}
             enrollments={effectiveEnrollments}
+            examPlanReady={examPlanReady}
             onMove={handleMove}
             onSessionChange={updateSession}
             onResetPlacements={resetGradePlacements}
@@ -429,6 +567,9 @@ function App() {
                   if (s.dayId === dayIdB) return { ...s, dayId: dayIdA, dateLabel: labelA ?? "" };
                   return s;
                 }),
+                // 날짜 전체 스왑 → 모든 대기실·고사실 확정 해제
+                waitingConfirmed: {},
+                roomConfirmed: {},
               }))
             }
             scheduleConfirmed={plan.scheduleConfirmed ?? {}}

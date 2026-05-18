@@ -180,6 +180,7 @@ function heatColor(value, max) {
 
 export default function ScheduleBoardPage({
   days, periods, sessions, students, enrollments,
+  examPlanReady,
   onMove, onSessionChange, onDayChange, onSwapDays, onResetPlacements,
   scheduleConfirmed, onConfirmSchedule, onDeconfirmSchedule,
 }) {
@@ -363,8 +364,15 @@ export default function ScheduleBoardPage({
     );
   }
 
+  const notReadyGrades = ["1", "2", "3"].filter((g) => examPlanReady && !examPlanReady[g]);
+
   return (
     <>
+    {notReadyGrades.length > 0 && (
+      <div style={{ padding: "0.55rem 1.5rem", backgroundColor: "#fff7ed", color: "#b45309", borderBottom: "1px solid #fed7aa", fontSize: "0.82rem", fontWeight: 600 }}>
+        ⚠ {notReadyGrades.join(", ")}학년 시험계획 과목 확정이 필요합니다. 시험계획 탭에서 과목 확정 후 배치하세요.
+      </div>
+    )}
     <div style={s.page}>
       {/* ── 상단 컨트롤 바 ── */}
       <div style={s.topBar}>

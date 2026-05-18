@@ -124,19 +124,27 @@ function normalizePeriod(period) {
 
 /** subjects 변경 시 기존 config는 유지하고 새로 추가된 과목만 초기화 */
 function mergeExamConfig(sessions, subjects, prevConfig) {
-  const bySubjectId = Object.fromEntries(sessions.map((s) => [s.subjectId, s]));
+  // subjectId가 없는 세션(지정과목 등)은 제외
+  const bySubjectId = Object.fromEntries(
+    sessions.filter((s) => s.subjectId).map((s) => [s.subjectId, s]),
+  );
   const next = {};
   subjects.forEach((subject) => {
-    if (prevConfig[subject.id]) {
-      next[subject.id] = prevConfig[subject.id]; // 기존 상태 보존 (studentCountOverride 포함)
-    } else {
-      const session = bySubjectId[subject.id];
+    const session = bySubjectId[subject.id];
+    const prev    = prevConfig[subject.id];
+
+    if (session) {
+      // 세션이 확정되어 있으면 hasExam은 반드시 true (경쟁 조건 방지)
       next[subject.id] = {
-        hasExam: Boolean(session),
-        duration: session?.duration ?? 50,
-        isEssay: session?.isEssay ?? false,
-        studentCountOverride: null,
+        hasExam:               true,
+        duration:              session.duration              ?? prev?.duration              ?? 50,
+        isEssay:               session.isEssay               ?? prev?.isEssay               ?? false,
+        studentCountOverride:  prev?.studentCountOverride    ?? null,
       };
+    } else if (prev) {
+      next[subject.id] = prev; // 사용자 선택 보존 (studentCountOverride 포함)
+    } else {
+      next[subject.id] = { hasExam: false, duration: 50, isEssay: false, studentCountOverride: null };
     }
   });
   return next;
@@ -242,7 +250,7 @@ function getGradeStatus(grade, subjects, examConfig, sessions) {
 
 // ─── 진행 현황 패널 ───────────────────────────────────────────────────────────
 
-function GradeStatusPanel({ subjects, examConfig, sessions }) {
+function GradeStatusPanel({ subjects, examConfig, sessions, examPlanConfirmed, onDeconfirmExamPlan }) {
   const STATUS_META = {
     confirmed:  { label: "확정",   badge: "sBadgeOk" },
     modified:   { label: "수정중", badge: "sBadgeInfo" },
@@ -279,6 +287,20 @@ function GradeStatusPanel({ subjects, examConfig, sessions }) {
                     ? <><br /><span style={{ color: "#b45309" }}>미배치 {unplaced}개 남음</span></>
                     : <><br /><span style={{ color: "#15803d" }}>일정 배치 완료</span></>
                   }
+                  {examPlanConfirmed?.[grade] && onDeconfirmExamPlan && (
+                    <><br />
+                      <button
+                        style={{ marginTop: "0.35rem", padding: "0.18rem 0.55rem", backgroundColor: "#fff", color: "#dc2626", border: "1px solid #fca5a5", borderRadius: "5px", cursor: "pointer", fontSize: "0.72rem", fontWeight: 600 }}
+                        onClick={() => {
+                          if (window.confirm(`${grade}학년 과목 확정을 해제하시겠습니까?\n일정·대기실·고사실 배정 확정도 함께 해제됩니다.`)) {
+                            onDeconfirmExamPlan(grade);
+                          }
+                        }}
+                      >
+                        확정 해제
+                      </button>
+                    </>
+                  )}
                 </>
               )}
               {status === "modified" && (
@@ -412,7 +434,7 @@ function summarizeDiff(diff) {
   return parts;
 }
 
-export default function ExamPlanPage({ plan, onPlanChange, subjects, students, enrollments, studentsLoadedAt, onReloadStudents }) {
+export default function ExamPlanPage({ plan, onPlanChange, subjects, students, enrollments, studentsLoadedAt, onReloadStudents, examPlanConfirmed, onConfirmExamPlan, onDeconfirmExamPlan }) {
   const [planName, setPlanName]   = useState(plan.name ?? "");
   const [semester, setSemester]   = useState(plan.semester ?? null);
   const [days, setDays]           = useState(plan.days ?? []);
@@ -430,11 +452,11 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
   const planSessionsRef = useRef(plan.sessions);
   planSessionsRef.current = plan.sessions;
 
-  // subjects 변경 시 기존 override는 유지, 새 과목만 초기화
+  // subjects 또는 plan.id 변경 시 재초기화 — plan.id 없으면 F5 후 세션이 무시됨
   useEffect(() => {
     if (subjects.length === 0) return;
     setExamConfig((prev) => mergeExamConfig(planSessionsRef.current, subjects, prev));
-  }, [subjects]);
+  }, [subjects, plan.id]);
 
   useEffect(() => {
     setPlanName(plan.name ?? "");
@@ -586,6 +608,7 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
     // 다른 학년 세션은 그대로 유지
     const otherSessions = plan.sessions.filter((s) => String(s.grade) !== gradeFilter);
     onPlanChange({ name: planName, semester, days, periods, sessions: [...otherSessions, ...currentGradeSessions] });
+    if (onConfirmExamPlan) onConfirmExamPlan(gradeFilter);
   };
 
   // ── 파생값 ──
@@ -925,6 +948,8 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
         subjects={semesterSubjects}
         examConfig={examConfig}
         sessions={plan.sessions}
+        examPlanConfirmed={examPlanConfirmed ?? {}}
+        onDeconfirmExamPlan={onDeconfirmExamPlan}
       />
 
       </div> {/* mainGrid 끝 */}
