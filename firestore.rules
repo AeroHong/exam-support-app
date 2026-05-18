@@ -23,13 +23,21 @@ service cloud.firestore {
       return userDoc().schoolId;
     }
 
-    // 도메인 → 학교 매핑: 로그인 사용자 읽기, super_admin 쓰기
+    // 학교 검색용 공개 인덱스 (name 필드만): 로그인 사용자 읽기
+    match /schoolIndex/{schoolId} {
+      allow read: if isSignedIn();
+      allow create: if isSuperAdmin() ||
+        (isSignedIn() && schoolId.matches('school_.*'));
+      allow update, delete: if isSuperAdmin();
+    }
+
+    // 도메인 → 학교 매핑 (레거시): super_admin 전용
     match /schoolDomains/{domain} {
       allow read: if isSignedIn();
       allow write: if isSuperAdmin();
     }
 
-    // 개인 이메일 → 학교 매핑: 로그인 사용자 읽기, super_admin 쓰기
+    // 개인 이메일 → 학교 매핑 (레거시): super_admin 전용
     match /userEmailMap/{emailKey} {
       allow read: if isSignedIn();
       allow write: if isSuperAdmin();
@@ -50,7 +58,7 @@ service cloud.firestore {
         || (isSignedIn() && schoolId == "demo-school");
       allow create: if isSuperAdmin() ||
         (isSignedIn() &&
-         schoolId.matches('guest_.*') &&
+         (schoolId.matches('school_.*') || schoolId.matches('guest_.*')) &&
          request.resource.data.ownerUid == request.auth.uid);
       allow update, delete: if isSuperAdmin() || (isSignedIn() && mySchoolId() == schoolId);
 

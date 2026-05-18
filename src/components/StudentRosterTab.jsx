@@ -317,7 +317,7 @@ const GRADE_TABS = [
   { key: 3, label: "3학년" },
 ];
 
-export default function StudentRosterTab({ schoolId, subjects = [], onDataChanged, onReloadStudents }) {
+export default function StudentRosterTab({ schoolId, subjects = [], onDataChanged, onReloadStudents, readOnly = false }) {
   const fileInputRef = useRef(null);
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -543,14 +543,16 @@ export default function StudentRosterTab({ schoolId, subjects = [], onDataChange
           <p style={s.eyebrow}>기초 데이터</p>
           <h2 style={s.pageTitle}>학생 명렬</h2>
         </div>
-        <div style={s.btnRow}>
-          <button style={s.outlineBtn} onClick={() => { setUploadOpen(o => !o); setParseError(""); setPreviewRows(null); }}>
-            {uploadOpen ? "업로드 닫기 ✕" : "파일 업로드"}
-          </button>
-          <button style={s.primaryBtn} onClick={() => { setEditTarget(null); setModalOpen(true); }}>
-            + 학생 추가
-          </button>
-        </div>
+        {!readOnly && (
+          <div style={s.btnRow}>
+            <button style={s.outlineBtn} onClick={() => { setUploadOpen(o => !o); setParseError(""); setPreviewRows(null); }}>
+              {uploadOpen ? "업로드 닫기 ✕" : "파일 업로드"}
+            </button>
+            <button style={s.primaryBtn} onClick={() => { setEditTarget(null); setModalOpen(true); }}>
+              + 학생 추가
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ── 알림 ── */}
@@ -692,7 +694,7 @@ export default function StudentRosterTab({ schoolId, subjects = [], onDataChange
             <th style={s.th}>이메일</th>
             <th style={s.th}>선택과목</th>
             <th style={s.thRight}>
-              {filtered.length > 0 && (
+              {!readOnly && filtered.length > 0 && (
                 <button style={s.dangerOutlineBtn} onClick={handleDeleteByGrade} disabled={loading}>
                   {gradeFilter === "all" ? "전체" : `${gradeFilter}학년`} 삭제 ({filtered.length}명)
                 </button>
@@ -726,8 +728,12 @@ export default function StudentRosterTab({ schoolId, subjects = [], onDataChange
               <td style={s.tdMuted}>{student.email || "—"}</td>
               <td style={s.tdMuted}>{student.electiveSubjects?.join(", ") || "—"}</td>
               <td style={s.tdRight}>
-                <button style={s.editBtn} onClick={() => { setEditTarget(student); setModalOpen(true); }}>수정</button>
-                <button style={s.deleteBtn} onClick={() => handleDelete(student)}>삭제</button>
+                {!readOnly && (
+                  <>
+                    <button style={s.editBtn} onClick={() => { setEditTarget(student); setModalOpen(true); }}>수정</button>
+                    <button style={s.deleteBtn} onClick={() => handleDelete(student)}>삭제</button>
+                  </>
+                )}
               </td>
             </tr>
           ))}

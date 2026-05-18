@@ -33,7 +33,8 @@ const s = {
 
   primaryBtn:  { padding: "0.45rem 1rem", backgroundColor: "#4f46e5", color: "#fff", border: "none", borderRadius: "7px", cursor: "pointer", fontSize: "0.85rem", fontWeight: 600 },
   outlineBtn:  { padding: "0.45rem 1rem", backgroundColor: "#fff", color: "#374151", border: "1px solid #d1d5db", borderRadius: "7px", cursor: "pointer", fontSize: "0.85rem" },
-  dangerBtn:   { padding: "0.35rem 0.75rem", backgroundColor: "#fff", color: "#dc2626", border: "1px solid #dc2626", borderRadius: "6px", cursor: "pointer", fontSize: "0.78rem", fontWeight: 600 },
+  dangerBtn:         { padding: "0.35rem 0.75rem", backgroundColor: "#fff", color: "#dc2626", border: "1px solid #dc2626", borderRadius: "6px", cursor: "pointer", fontSize: "0.78rem", fontWeight: 600 },
+  dangerOutlineBtn:  { padding: "0.3rem 0.7rem", backgroundColor: "#fff", color: "#dc2626", border: "1px solid #fca5a5", borderRadius: "6px", cursor: "pointer", fontSize: "0.78rem", fontWeight: 600 },
 
   filterRow:   { display: "flex", gap: "0.4rem", marginBottom: "0.75rem", alignItems: "center", flexWrap: "wrap" },
   divider:     { width: "1px", height: "20px", backgroundColor: "#e5e7eb", margin: "0 0.2rem" },
@@ -104,9 +105,8 @@ function scheduleLabel(subject) {
     }
     return `${subject.grade}학년 ${subject.semester}학기`;
   }
-  if (subject.selectionBlock) {
-    const { grade, semester, pickCount, blockNumber } = subject.selectionBlock;
-    return `${grade}학년 ${semester}학기 [택${pickCount}] B${blockNumber}`;
+  if (subject.grade && subject.semester) {
+    return `${subject.grade}학년 ${subject.semester}학기`;
   }
   return "—";
 }
@@ -283,6 +283,9 @@ function parseEducationExcel(arrayBuffer, targetGrade) {
 function SubjectModal({ subject, onClose, onSave, classesByGrade }) {
   const isEdit = Boolean(subject?.id);
   const curYear = new Date().getFullYear();
+  const now = new Date();
+  const schoolYear = now.getMonth() >= 2 ? now.getFullYear() : now.getFullYear() - 1;
+  const gradeToEntryYear = (g) => schoolYear - (g - 1);
 
   const [form, setForm] = useState(() => subject ? {
     name: subject.name || "",
@@ -311,7 +314,7 @@ function SubjectModal({ subject, onClose, onSave, classesByGrade }) {
     baseCredits: 4,
     selectionBlock: null,
     description: "",
-    entryYear: curYear,
+    entryYear: schoolYear,
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -322,10 +325,7 @@ function SubjectModal({ subject, onClose, onSave, classesByGrade }) {
     setForm(p => ({
       ...p,
       category: cat,
-      selectionBlock: cat === "학생선택"
-        ? { grade: 2, semester: 1, pickCount: 5, blockNumber: 1 }
-        : null,
-      grade: cat === "학교지정" ? (p.grade || 1) : (p.selectionBlock?.grade || 2),
+      selectionBlock: null,
       semesterClassMap: null,
     }));
   }
@@ -437,9 +437,9 @@ function SubjectModal({ subject, onClose, onSave, classesByGrade }) {
           {/* 입학년도 + 학점 */}
           <div style={s.grid3}>
             <div>
-              <label style={s.label}>입학년도</label>
+              <label style={s.label}>입학년도 <span style={{ fontWeight: 400, color: "#9ca3af" }}>(학년 선택 시 자동)</span></label>
               <input style={s.input} type="number" min={2020} max={2035}
-                value={form.entryYear} onChange={e => set("entryYear", e.target.value)} />
+                value={form.entryYear} onChange={e => set("entryYear", Number(e.target.value))} />
             </div>
             <div>
               <label style={s.label}>기본학점</label>
@@ -461,7 +461,12 @@ function SubjectModal({ subject, onClose, onSave, classesByGrade }) {
                 <div>
                   <label style={s.label}>학년</label>
                   <select style={s.mSelect} value={form.grade}
-                    onChange={e => { set("grade", Number(e.target.value)); set("semesterClassMap", null); }}>
+                    onChange={e => {
+                      const g = Number(e.target.value);
+                      set("grade", g);
+                      set("entryYear", gradeToEntryYear(g));
+                      set("semesterClassMap", null);
+                    }}>
                     {[1, 2, 3].map(g => <option key={g} value={g}>{g}학년</option>)}
                   </select>
                 </div>
@@ -547,37 +552,43 @@ function SubjectModal({ subject, onClose, onSave, classesByGrade }) {
             </div>
           )}
 
-          {/* 학생선택: 블록 설정 */}
+          {/* 학생선택: 개설 학기 */}
           {form.category === "학생선택" && (
             <div style={s.boxSel}>
-              <p style={{ ...s.boxLabel, color: "#16a34a" }}>선택 블록 (학생선택)</p>
-              <div style={s.grid3}>
+              <p style={{ ...s.boxLabel, color: "#16a34a" }}>개설 학기 (학생선택)</p>
+              <div style={s.grid2}>
                 <div>
                   <label style={s.label}>학년</label>
-                  <select style={s.mSelect} value={form.selectionBlock?.grade ?? 2}
-                    onChange={e => setSb({ grade: Number(e.target.value) })}>
-                    {[2, 3].map(g => <option key={g} value={g}>{g}학년</option>)}
+                  <select style={s.mSelect} value={form.grade}
+                    onChange={e => {
+                      const g = Number(e.target.value);
+                      set("grade", g);
+                      set("entryYear", gradeToEntryYear(g));
+                    }}>
+                    {[1, 2, 3].map(g => <option key={g} value={g}>{g}학년</option>)}
                   </select>
                 </div>
                 <div>
                   <label style={s.label}>학기</label>
-                  <select style={s.mSelect} value={form.selectionBlock?.semester ?? 1}
-                    onChange={e => setSb({ semester: Number(e.target.value) })}>
-                    {[1, 2].map(sm => <option key={sm} value={sm}>{sm}학기</option>)}
-                  </select>
+                  <div style={{ display: "flex", gap: "0.4rem" }}>
+                    {[{ val: 1, label: "1학기" }, { val: 2, label: "2학기" }].map(opt => (
+                      <button key={opt.val} type="button"
+                        style={{
+                          padding: "0.35rem 0.7rem",
+                          border: `1px solid ${form.semester === opt.val ? "#16a34a" : "#d1d5db"}`,
+                          borderRadius: "6px",
+                          backgroundColor: form.semester === opt.val ? "#f0fdf4" : "#fff",
+                          color: form.semester === opt.val ? "#16a34a" : "#6b7280",
+                          fontSize: "0.8rem",
+                          fontWeight: form.semester === opt.val ? 700 : 400,
+                          cursor: "pointer",
+                        }}
+                        onClick={() => set("semester", opt.val)}>
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div>
-                  <label style={s.label}>택N</label>
-                  <input style={s.input} type="number" min={1} max={10}
-                    value={form.selectionBlock?.pickCount ?? 5}
-                    onChange={e => setSb({ pickCount: Number(e.target.value) })} />
-                </div>
-              </div>
-              <div>
-                <label style={s.label}>블록 번호</label>
-                <input style={s.input} type="number" min={1} max={10}
-                  value={form.selectionBlock?.blockNumber ?? 1}
-                  onChange={e => setSb({ blockNumber: Number(e.target.value) })} />
               </div>
             </div>
           )}
@@ -943,7 +954,7 @@ const GRADE_TABS = [
   { key: 3, label: "3학년" },
 ];
 
-export default function SubjectsTab({ schoolId }) {
+export default function SubjectsTab({ schoolId, readOnly = false }) {
   const [subjects, setSubjects] = useState([]);
   const [loading, setLoading] = useState(false);
   const [gradeFilter, setGradeFilter] = useState("all");
@@ -999,14 +1010,22 @@ export default function SubjectsTab({ schoolId }) {
     }
   }
 
-  async function handleDeleteAll() {
-    if (!subjects.length) return;
-    if (!window.confirm(`전체 과목 ${subjects.length}개를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) return;
+  async function handleDeleteFiltered() {
+    if (!filtered.length) return;
+    const label = gradeFilter === "all" ? "전체" : `${gradeFilter}학년`;
+    if (!window.confirm(`${label} 과목 ${filtered.length}개를 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) return;
     setLoading(true);
     try {
-      await deleteSubjectsByYear(schoolId, null);
-      setSubjects([]);
-      setNotice({ type: "ok", msg: "전체 과목이 삭제되었습니다." });
+      if (gradeFilter === "all") {
+        await deleteSubjectsByYear(schoolId, null);
+        setSubjects([]);
+      } else {
+        for (const subject of filtered) {
+          await deleteSubject(schoolId, subject.id);
+        }
+        setSubjects(prev => prev.filter(s => s.grade !== gradeFilter));
+      }
+      setNotice({ type: "ok", msg: `${label} 과목 ${filtered.length}개가 삭제되었습니다.` });
     } catch (err) {
       setNotice({ type: "err", msg: "삭제 실패: " + err.message });
     } finally {
@@ -1084,21 +1103,20 @@ export default function SubjectsTab({ schoolId }) {
         </div>
         <div style={s.btnRow}>
           {subjects.length > 0 && (
+            <button style={s.outlineBtn} onClick={handleDownloadExcel} disabled={loading}>
+              Excel 다운로드
+            </button>
+          )}
+          {!readOnly && (
             <>
-              <button style={s.outlineBtn} onClick={handleDownloadExcel} disabled={loading}>
-                Excel 다운로드
+              <button style={s.outlineBtn} onClick={() => setImportOpen(true)}>
+                엑셀 가져오기
               </button>
-              <button style={s.dangerBtn} onClick={handleDeleteAll} disabled={loading}>
-                전체 삭제
+              <button style={s.primaryBtn} onClick={() => { setEditTarget(null); setModalOpen(true); }}>
+                + 과목 추가
               </button>
             </>
           )}
-          <button style={s.outlineBtn} onClick={() => setImportOpen(true)}>
-            엑셀 가져오기
-          </button>
-          <button style={s.primaryBtn} onClick={() => { setEditTarget(null); setModalOpen(true); }}>
-            + 과목 추가
-          </button>
         </div>
       </div>
 
@@ -1147,11 +1165,15 @@ export default function SubjectsTab({ schoolId }) {
             <th style={s.th}>개설정보</th>
             <th style={s.th}>입학년도</th>
             <th style={s.thRight}>
-              {filtered.length > 0 && (
+              {!readOnly && filtered.length > 0 ? (
+                <button style={s.dangerOutlineBtn} onClick={handleDeleteFiltered} disabled={loading}>
+                  {gradeFilter === "all" ? "전체" : `${gradeFilter}학년`} 삭제 ({filtered.length}개)
+                </button>
+              ) : filtered.length > 0 ? (
                 <span style={{ fontSize: "0.78rem", color: "#9ca3af", fontWeight: 400 }}>
                   {filtered.length}개
                 </span>
-              )}
+              ) : null}
             </th>
           </tr>
         </thead>
@@ -1183,8 +1205,12 @@ export default function SubjectsTab({ schoolId }) {
               <td style={s.tdMuted}>{scheduleLabel(subject)}</td>
               <td style={s.tdMuted}>{subject.entryYear || "—"}</td>
               <td style={s.tdRight}>
-                <button style={s.editBtn} onClick={() => { setEditTarget(subject); setModalOpen(true); }}>수정</button>
-                <button style={s.deleteBtn} onClick={() => handleDelete(subject)}>삭제</button>
+                {!readOnly && (
+                  <>
+                    <button style={s.editBtn} onClick={() => { setEditTarget(subject); setModalOpen(true); }}>수정</button>
+                    <button style={s.deleteBtn} onClick={() => handleDelete(subject)}>삭제</button>
+                  </>
+                )}
               </td>
             </tr>
           ))}

@@ -156,7 +156,7 @@ function sortRooms(list) {
 
 // ─── 메인 컴포넌트 ────────────────────────────────────────────────────────────
 
-export default function RoomsTab({ schoolId, students = [] }) {
+export default function RoomsTab({ schoolId, students = [], readOnly = false }) {
   const [rooms, setRooms]         = useState([]);
   const [loading, setLoading]     = useState(true);
   const [notice, setNotice]       = useState(null);
@@ -276,7 +276,7 @@ export default function RoomsTab({ schoolId, students = [] }) {
               <p style={s.panelTitle}>학급 교실</p>
               <p style={s.panelDesc}>층·인원은 셀에서 바로 편집 후 Enter</p>
             </div>
-            {newClasses.length > 0 && (
+            {!readOnly && newClasses.length > 0 && (
               <button style={s.primaryBtn} onClick={() => setAutoModal(true)}>
                 자동 생성 ({newClasses.length})
               </button>
@@ -290,7 +290,7 @@ export default function RoomsTab({ schoolId, students = [] }) {
                 : `${newClasses.length}개 학급 감지됨 → 자동 생성 버튼`}
             </div>
           ) : (
-            <RoomTable rooms={classRooms} onEdit={openEdit} onDelete={handleDelete} onPatch={patchRoom} />
+            <RoomTable rooms={classRooms} onEdit={readOnly ? null : openEdit} onDelete={readOnly ? null : handleDelete} onPatch={readOnly ? null : patchRoom} readOnly={readOnly} />
           )}
         </div>
 
@@ -304,14 +304,16 @@ export default function RoomsTab({ schoolId, students = [] }) {
                 <p style={s.panelTitle}>추가 고사실</p>
                 <p style={s.panelDesc}>교과교실, 특별실 등</p>
               </div>
-              <button style={s.primaryBtn} onClick={() => setModal({ mode: "add", room: { name: "", capacity: "", floor: "", roomType: "extra" } })}>
-                + 추가
-              </button>
+              {!readOnly && (
+                <button style={s.primaryBtn} onClick={() => setModal({ mode: "add", room: { name: "", capacity: "", floor: "", roomType: "extra" } })}>
+                  + 추가
+                </button>
+              )}
             </div>
             {extraRooms.length === 0 ? (
               <div style={s.emptyBox}>등록된 추가 고사실이 없습니다.</div>
             ) : (
-              <RoomTable rooms={extraRooms} onEdit={openEdit} onDelete={handleDelete} onPatch={patchRoom} />
+              <RoomTable rooms={extraRooms} onEdit={readOnly ? null : openEdit} onDelete={readOnly ? null : handleDelete} onPatch={readOnly ? null : patchRoom} readOnly={readOnly} />
             )}
           </div>
 
@@ -322,14 +324,16 @@ export default function RoomsTab({ schoolId, students = [] }) {
                 <p style={s.panelTitle}>대기실</p>
                 <p style={s.panelDesc}>교시 공백 학생 대기 공간</p>
               </div>
-              <button style={s.primaryBtn} onClick={() => setModal({ mode: "add", room: { name: "", capacity: "", floor: "", roomType: "waiting" } })}>
-                + 추가
-              </button>
+              {!readOnly && (
+                <button style={s.primaryBtn} onClick={() => setModal({ mode: "add", room: { name: "", capacity: "", floor: "", roomType: "waiting" } })}>
+                  + 추가
+                </button>
+              )}
             </div>
             {waitingRooms.length === 0 ? (
               <div style={s.emptyBox}>등록된 대기실이 없습니다.</div>
             ) : (
-              <RoomTable rooms={waitingRooms} onEdit={openEdit} onDelete={handleDelete} onPatch={patchRoom} />
+              <RoomTable rooms={waitingRooms} onEdit={readOnly ? null : openEdit} onDelete={readOnly ? null : handleDelete} onPatch={readOnly ? null : patchRoom} readOnly={readOnly} />
             )}
           </div>
 
@@ -344,7 +348,7 @@ export default function RoomsTab({ schoolId, students = [] }) {
 
 // ─── 테이블 컴포넌트 ──────────────────────────────────────────────────────────
 
-function RoomTable({ rooms, onEdit, onDelete, onPatch }) {
+function RoomTable({ rooms, onEdit, onDelete, onPatch, readOnly = false }) {
   return (
     <table style={s.table}>
       <thead style={s.thead}>
@@ -374,10 +378,12 @@ function RoomTable({ rooms, onEdit, onDelete, onPatch }) {
               onSave={(v) => onPatch(room.id, { capacity: v ?? 0 })}
             />
             <td style={s.tdRight}>
-              <div style={s.iconBtnRow}>
-                <button style={s.iconBtn} onClick={() => onEdit(room)} title="수정"><PencilIcon /></button>
-                <button style={s.iconBtn} onClick={() => onDelete(room)} title="삭제"><TrashIcon /></button>
-              </div>
+              {!readOnly && (
+                <div style={s.iconBtnRow}>
+                  <button style={s.iconBtn} onClick={() => onEdit(room)} title="수정"><PencilIcon /></button>
+                  <button style={s.iconBtn} onClick={() => onDelete(room)} title="삭제"><TrashIcon /></button>
+                </div>
+              )}
             </td>
           </tr>
         ))}

@@ -20,7 +20,7 @@ const s = {
   arrow:     { fontSize: "0.75rem", color: "#d1d5db", userSelect: "none" },
 };
 
-export default function DataManagementPage({ schoolId, students = [], subjects = [], onDataChanged, onReloadStudents }) {
+export default function DataManagementPage({ schoolId, students = [], subjects = [], onDataChanged, onReloadStudents, readOnly = false }) {
   const [activeTab, setActiveTab] = useState("subjects");
 
   return (
@@ -29,6 +29,11 @@ export default function DataManagementPage({ schoolId, students = [], subjects =
         <p style={s.eyebrow}>기초 데이터</p>
         <h2 style={s.pageTitle}>기초 데이터 관리</h2>
       </div>
+      {readOnly && (
+        <div style={{ marginBottom: "1rem", padding: "0.6rem 1rem", backgroundColor: "#fef9c3", border: "1px solid #fde047", borderRadius: "8px", fontSize: "0.85rem", color: "#854d0e" }}>
+          데모 모드에서는 데이터 조회만 가능합니다. 수정·추가·삭제는 관리자에게 문의하세요.
+        </div>
+      )}
 
       <div style={s.tabRow}>
         {TABS.map((tab, i) => (
@@ -44,9 +49,9 @@ export default function DataManagementPage({ schoolId, students = [], subjects =
         ))}
       </div>
 
-      {activeTab === "students" && <StudentRosterTab schoolId={schoolId} subjects={subjects} onDataChanged={onDataChanged} onReloadStudents={onReloadStudents} />}
-      {activeTab === "rooms"    && <RoomsTab    schoolId={schoolId} students={students} />}
-      {activeTab === "subjects" && <SubjectsTab schoolId={schoolId} />}
+      {activeTab === "students" && <StudentRosterTab schoolId={schoolId} subjects={subjects} onDataChanged={onDataChanged} onReloadStudents={onReloadStudents} readOnly={readOnly} />}
+      {activeTab === "rooms"    && <RoomsTab    schoolId={schoolId} students={students} readOnly={readOnly} />}
+      {activeTab === "subjects" && <SubjectsTab schoolId={schoolId} readOnly={readOnly} />}
     </div>
   );
 }

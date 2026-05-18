@@ -321,13 +321,23 @@ function App() {
     ? engine.metricStudentDetails[selectedMetric] ?? []
     : [];
 
+  // 초기 로딩 / 로그인 처리 중 → 화면 번쩍임 방지
+  if (auth.status === "loading" || auth.status === "resolving") {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "#f8fafc" }}>
+        <p style={{ color: "#9ca3af", fontSize: "0.9rem" }}>불러오는 중…</p>
+      </div>
+    );
+  }
+
   if (!demoMode && auth.status !== "signed_in") {
     return (
       <LoginScreen
         status={auth.status}
         error={auth.error}
         onSignIn={auth.signIn}
-        onSubmitSchoolName={auth.submitSchoolName}
+        onJoinSchool={auth.joinExistingSchool}
+        onCreateSchool={auth.createNewSchool}
         onDemo={auth.signInDemo}
       />
     );
@@ -442,7 +452,7 @@ function App() {
       {/* ── 페이지 콘텐츠 ── */}
       <main>
         {activePage === "data" ? (
-          <DataManagementPage schoolId={currentSchoolId} students={effectiveStudents} subjects={baseSubjects} onDataChanged={handleDataChanged} onReloadStudents={tenantData.reload} />
+          <DataManagementPage schoolId={currentSchoolId} students={effectiveStudents} subjects={baseSubjects} onDataChanged={handleDataChanged} onReloadStudents={tenantData.reload} readOnly={demoMode} />
         ) : null}
 
         {activePage === "examplan" ? (

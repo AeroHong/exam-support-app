@@ -9,10 +9,10 @@ import {
 } from "firebase/auth";
 import { firebaseAuth, googleProvider } from "../lib/firebase";
 import {
-  createGuestSchool,
+  createSchool,
+  joinSchool,
+  loadSchoolDoc,
   loadUserDoc,
-  lookupSchoolByDomain,
-  lookupSchoolByEmail,
   upsertUserDoc,
 } from "../lib/firestoreSchool";
 
@@ -30,17 +30,17 @@ const INITIAL_STATE = {
  * 인증 상태 및 프로필 관리 훅
  *
  * status 값:
- *   'loading'           - Firebase 초기화 중 또는 로그인 처리 중
- *   'signed_out'        - 비로그인 상태
- *   'resolving'         - 로그인 후 학교 정보 확인 중
- *   'needs_school_name' - 학교 정보를 찾지 못해 학교명 입력 대기
- *   'signed_in'         - 로그인 완료
- *   'error'             - 오류 발생
+ *   'loading'             - Firebase 초기화 중 또는 로그인 처리 중
+ *   'signed_out'          - 비로그인 상태
+ *   'resolving'           - 로그인 후 학교 정보 확인 중
+ *   'needs_school_setup'  - 학교 정보를 찾지 못해 학교 검색/등록 대기
+ *   'signed_in'           - 로그인 완료
+ *   'error'               - 오류 발생
  */
 export function useAuth() {
   const [authState, setAuthState] = useState(INITIAL_STATE);
 
-  // needs_school_name 상태에서 submitSchoolName이 user를 참조할 수 있도록 ref 유지
+  // needs_school_setup 상태에서 join/create 콜백이 user를 참조할 수 있도록 ref 유지
   const pendingUserRef = useRef(null);
 
   useEffect(() => {
@@ -103,7 +103,6 @@ export function useAuth() {
         }
 
         const email = user.email ?? "";
-        const domain = email.split("@")[1]?.toLowerCase() ?? "";
 
         // ── super_admin 처리 ──────────────────────────────────────────────
         if (email === SUPER_ADMIN_EMAIL) {
@@ -137,17 +136,38 @@ export function useAuth() {
           return;
         }
 
-        // ── 학교 조회: 도메인 → 이메일 → 기존 사용자 문서 ────────────────
-        let school = await lookupSchoolByDomain(domain);
+        // ── 기존 사용자 문서 로드 (role fallback 포함) ───────────────────
+        const existingUserDoc = await loadUserDoc(user.uid);
 
-        if (!school) {
-          school = await lookupSchoolByEmail(email);
+        // ── super_admin 재확인: 이메일 OR 기존 user doc role ───────────
+        if (existingUserDoc?.role === "super_admin") {
+          const profile = {
+            email,
+            displayName: user.displayName ?? "",
+            schoolId: null,
+            schoolName: "",
+            role: "super_admin",
+            isGuest: false,
+          };
+          if (!cancelled) {
+            setAuthState({ status: "signed_in", user, profile, error: null, warning: null });
+          }
+          return;
         }
 
-        if (!school) {
-          const userDoc = await loadUserDoc(user.uid);
-          if (userDoc?.schoolId) {
-            school = { schoolId: userDoc.schoolId, schoolName: userDoc.schoolName ?? "" };
+        // ── 학교 조회: 기존 사용자 문서 → 학교 실존 검증 ─────────────────
+        let school = null;
+
+        if (existingUserDoc?.schoolId) {
+          const schoolData = await loadSchoolDoc(existingUserDoc.schoolId);
+          if (schoolData) {
+            school = {
+              schoolId: existingUserDoc.schoolId,
+              schoolName: schoolData.name ?? existingUserDoc.schoolName ?? "",
+            };
+          } else {
+            // 학교가 삭제됨 → userDoc schoolId 초기화 후 학교 선택 화면으로
+            await upsertUserDoc(user.uid, { schoolId: null, schoolName: "" });
           }
         }
 
@@ -183,11 +203,11 @@ export function useAuth() {
           return;
         }
 
-        // ── 학교 못 찾음 → 학교명 입력 대기 ─────────────────────────────
+        // ── 학교 못 찾음 → 학교 검색/등록 대기 ──────────────────────────
         pendingUserRef.current = user;
         if (!cancelled) {
           setAuthState({
-            status: "needs_school_name",
+            status: "needs_school_setup",
             user,
             profile: null,
             error: null,
@@ -265,10 +285,50 @@ export function useAuth() {
     await signOut(firebaseAuth);
   }, []);
 
-  // ── submitSchoolName ────────────────────────────────────────────────────
-  const submitSchoolName = useCallback(async (schoolName) => {
+  // ── joinExistingSchool: 검색된 기존 학교에 참여 ─────────────────────────
+  const joinExistingSchool = useCallback(async (schoolId, schoolName) => {
     const user = pendingUserRef.current;
+    if (!user) {
+      setAuthState((prev) => ({
+        ...prev,
+        status: "error",
+        error: "로그인 세션이 만료되었습니다. 다시 로그인해 주세요.",
+      }));
+      return;
+    }
 
+    setAuthState((prev) => ({ ...prev, status: "resolving", error: null }));
+
+    try {
+      await joinSchool(user.uid, user.email ?? "", user.displayName ?? "", schoolId, schoolName);
+
+      pendingUserRef.current = null;
+      setAuthState({
+        status: "signed_in",
+        user,
+        profile: {
+          email: user.email ?? "",
+          displayName: user.displayName ?? "",
+          schoolId,
+          schoolName,
+          role: "school_admin",
+          isGuest: false,
+        },
+        error: null,
+        warning: null,
+      });
+    } catch (error) {
+      setAuthState((prev) => ({
+        ...prev,
+        status: "needs_school_setup",
+        error: error instanceof Error ? error.message : "학교 참여 중 오류가 발생했습니다.",
+      }));
+    }
+  }, []);
+
+  // ── createNewSchool: 새 학교 등록 ────────────────────────────────────────
+  const createNewSchool = useCallback(async (schoolName) => {
+    const user = pendingUserRef.current;
     if (!user) {
       setAuthState((prev) => ({
         ...prev,
@@ -279,45 +339,39 @@ export function useAuth() {
     }
 
     if (!schoolName || !schoolName.trim()) {
-      setAuthState((prev) => ({
-        ...prev,
-        error: "학교명을 입력해 주세요.",
-      }));
+      setAuthState((prev) => ({ ...prev, error: "학교명을 입력해 주세요." }));
       return;
     }
 
     setAuthState((prev) => ({ ...prev, status: "resolving", error: null }));
 
     try {
-      const { schoolId, schoolName: savedName } = await createGuestSchool(
+      const { schoolId, schoolName: savedName } = await createSchool(
         user.uid,
         user.email ?? "",
         user.displayName ?? "",
         schoolName.trim(),
       );
 
-      const profile = {
-        email: user.email ?? "",
-        displayName: user.displayName ?? "",
-        schoolId,
-        schoolName: savedName,
-        role: "guest",
-        isGuest: true,
-      };
-
       pendingUserRef.current = null;
-
       setAuthState({
         status: "signed_in",
         user,
-        profile,
+        profile: {
+          email: user.email ?? "",
+          displayName: user.displayName ?? "",
+          schoolId,
+          schoolName: savedName,
+          role: "school_admin",
+          isGuest: false,
+        },
         error: null,
         warning: null,
       });
     } catch (error) {
       setAuthState((prev) => ({
         ...prev,
-        status: "error",
+        status: "needs_school_setup",
         error: error instanceof Error ? error.message : "학교 등록 중 오류가 발생했습니다.",
       }));
     }
@@ -332,6 +386,7 @@ export function useAuth() {
     signIn,
     signInDemo,
     logout,
-    submitSchoolName,
+    joinExistingSchool,
+    createNewSchool,
   };
 }

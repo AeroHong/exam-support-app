@@ -6,6 +6,7 @@ import {
   deleteDoc,
   doc,
   serverTimestamp,
+  writeBatch,
 } from "firebase/firestore";
 import { firebaseDb } from "../lib/firebase";
 
@@ -111,12 +112,16 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
     setSchoolSaving(true);
     setSchoolSaveMsg("");
     try {
-      await setDoc(doc(firebaseDb, "schools", schoolId.trim()), {
+      const batch = writeBatch(firebaseDb);
+      batch.set(doc(firebaseDb, "schools", schoolId.trim()), {
         name: schoolName.trim(),
-        isGuest: false,
         ownerEmail: "",
         createdAt: serverTimestamp(),
       });
+      batch.set(doc(firebaseDb, "schoolIndex", schoolId.trim()), {
+        name: schoolName.trim(),
+      });
+      await batch.commit();
       setSchoolSaveMsg("ok:학교가 등록되었습니다.");
       setNewSchool(EMPTY_SCHOOL);
       await loadSchools();
@@ -131,7 +136,10 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
     if (!firebaseDb) return;
     if (!window.confirm(`학교 "${schoolId}"를 삭제하시겠습니까?`)) return;
     try {
-      await deleteDoc(doc(firebaseDb, "schools", schoolId));
+      const batch = writeBatch(firebaseDb);
+      batch.delete(doc(firebaseDb, "schools", schoolId));
+      batch.delete(doc(firebaseDb, "schoolIndex", schoolId));
+      await batch.commit();
       setSchools((prev) => prev.filter((s) => s.id !== schoolId));
     } catch (err) {
       setSchoolsError("삭제에 실패했습니다: " + err.message);

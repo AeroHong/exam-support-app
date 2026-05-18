@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { fetchSchoolIndex } from "../lib/firestoreSchool";
 
 const FEATURES = [
   {
@@ -150,64 +151,187 @@ const s = {
   footerText: { fontSize: "0.72rem", color: "#94a3b8" },
   footerLink: { fontSize: "0.72rem", fontWeight: 700, color: "#6366f1", textDecoration: "none" },
 
-  // ── 학교 이름 입력 화면 ──────────────────────────────────────────────
-  inputBox: {
+  // ── 학교 설정 화면 공통 ──────────────────────────────────────────────
+  setupBox: {
     minHeight: "100vh", display: "flex",
     alignItems: "center", justifyContent: "center",
     backgroundColor: "#f8fafc", padding: "2rem",
   },
-  inputCard: {
+  setupCard: {
     backgroundColor: "#fff", border: "1px solid #e0e7ff",
     borderRadius: "16px", padding: "2.5rem",
-    maxWidth: "420px", width: "100%",
+    maxWidth: "460px", width: "100%",
     boxShadow: "0 4px 24px rgba(79,70,229,0.08)",
   },
-  inputEyebrow: {
+  setupEyebrow: {
     fontSize: "0.71rem", fontWeight: 700, color: "#6366f1",
     letterSpacing: "0.08em", textTransform: "uppercase",
     margin: "0 0 0.4rem",
   },
-  inputTitle: { fontSize: "1.35rem", fontWeight: 800, color: "#1e1b4b", margin: "0 0 0.5rem" },
-  inputDesc: { fontSize: "0.84rem", color: "#6b7280", lineHeight: 1.6, margin: "0 0 1.5rem" },
+  setupTitle: { fontSize: "1.35rem", fontWeight: 800, color: "#1e1b4b", margin: "0 0 0.5rem" },
+  setupDesc: { fontSize: "0.84rem", color: "#6b7280", lineHeight: 1.6, margin: "0 0 1.5rem" },
+  searchRow: { display: "flex", gap: "0.5rem", marginBottom: "1rem" },
   textInput: {
-    width: "100%", padding: "0.65rem 0.9rem",
+    flex: 1, padding: "0.65rem 0.9rem",
     border: "1px solid #c7d2fe", borderRadius: "8px",
-    fontSize: "0.9rem", outline: "none",
-    boxSizing: "border-box", marginBottom: "0.75rem",
+    fontSize: "0.9rem", outline: "none", boxSizing: "border-box",
+  },
+  searchBtn: {
+    padding: "0.65rem 1rem", backgroundColor: "#4f46e5", color: "#fff",
+    border: "none", borderRadius: "8px", fontWeight: 600,
+    fontSize: "0.88rem", cursor: "pointer", whiteSpace: "nowrap",
+  },
+  resultList: {
+    border: "1px solid #e0e7ff", borderRadius: "10px",
+    overflow: "hidden", marginBottom: "0.75rem",
+  },
+  resultItem: {
+    display: "flex", alignItems: "center", justifyContent: "space-between",
+    padding: "0.75rem 1rem", borderBottom: "1px solid #f1f5f9",
+    cursor: "default",
+  },
+  resultName: { fontSize: "0.88rem", color: "#1e1b4b", fontWeight: 600 },
+  joinBtn: {
+    padding: "0.35rem 0.85rem", backgroundColor: "#4f46e5", color: "#fff",
+    border: "none", borderRadius: "6px", fontWeight: 600,
+    fontSize: "0.8rem", cursor: "pointer",
+  },
+  noResultBox: {
+    padding: "1.1rem", textAlign: "center",
+    fontSize: "0.84rem", color: "#6b7280",
+  },
+  newSchoolBtn: {
+    display: "block", width: "100%", padding: "0.65rem",
+    backgroundColor: "#f1f5f9", color: "#374151",
+    border: "1px solid #e2e8f0", borderRadius: "8px",
+    fontWeight: 600, fontSize: "0.88rem",
+    cursor: "pointer", textAlign: "center", marginBottom: "0.5rem",
+  },
+  confirmBox: {
+    backgroundColor: "#f0fdf4", border: "1px solid #bbf7d0",
+    borderRadius: "10px", padding: "1.1rem", marginBottom: "0.75rem",
+  },
+  confirmText: { fontSize: "0.88rem", color: "#166534", marginBottom: "0.75rem" },
+  confirmBtns: { display: "flex", gap: "0.5rem" },
+  confirmOk: {
+    flex: 1, padding: "0.6rem",
+    backgroundColor: "#16a34a", color: "#fff",
+    border: "none", borderRadius: "7px",
+    fontWeight: 700, fontSize: "0.88rem", cursor: "pointer",
+  },
+  confirmCancel: {
+    flex: 1, padding: "0.6rem",
+    backgroundColor: "#fff", color: "#374151",
+    border: "1px solid #d1d5db", borderRadius: "7px",
+    fontWeight: 600, fontSize: "0.88rem", cursor: "pointer",
   },
   errorText: { fontSize: "0.8rem", color: "#ef4444", marginTop: "0.5rem" },
 };
 
-export default function LoginScreen({ status, error, onSignIn, onSubmitSchoolName, onDemo }) {
-  const [schoolName, setSchoolName] = useState("");
+export default function LoginScreen({ status, error, onSignIn, onJoinSchool, onCreateSchool, onDemo }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState(null); // null = 검색 전, [] = 검색 결과 없음
+  const [searching, setSearching] = useState(false);
+  const [confirmName, setConfirmName] = useState(null); // 새 학교 등록 확인 대기 중인 이름
+
   const isLoading = status === "loading" || status === "resolving";
 
-  // ── 학교 이름 등록 화면 ─────────────────────────────────────────────
-  if (status === "needs_school_name") {
+  async function handleSearch() {
+    const q = query.trim();
+    if (!q) return;
+    setSearching(true);
+    setConfirmName(null);
+    try {
+      const all = await fetchSchoolIndex();
+      const filtered = all.filter((s) =>
+        s.name.toLowerCase().includes(q.toLowerCase())
+      );
+      setResults(filtered);
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  // ── 학교 설정 화면 ──────────────────────────────────────────────────
+  if (status === "needs_school_setup") {
     return (
-      <div style={s.inputBox}>
-        <div style={s.inputCard}>
-          <p style={s.inputEyebrow}>학교 등록</p>
-          <h2 style={s.inputTitle}>학교 이름을 입력해주세요</h2>
-          <p style={s.inputDesc}>
-            등록되지 않은 계정입니다. 학교 이름을 입력하면 개인 작업 공간이 생성됩니다.
+      <div style={s.setupBox}>
+        <div style={s.setupCard}>
+          <p style={s.setupEyebrow}>학교 설정</p>
+          <h2 style={s.setupTitle}>학교를 검색해주세요</h2>
+          <p style={s.setupDesc}>
+            소속 학교 이름을 검색해서 참여하거나, 처음 사용하는 학교라면 새로 등록할 수 있습니다.
           </p>
-          <input
-            style={s.textInput}
-            type="text"
-            value={schoolName}
-            onChange={(e) => setSchoolName(e.target.value)}
-            placeholder="예: 선유고등학교"
-            onKeyDown={(e) => e.key === "Enter" && schoolName.trim() && onSubmitSchoolName(schoolName.trim())}
-            autoFocus
-          />
-          <button
-            style={{ ...s.btnPrimary, width: "100%", justifyContent: "center" }}
-            disabled={!schoolName.trim()}
-            onClick={() => onSubmitSchoolName(schoolName.trim())}
-          >
-            시작하기
-          </button>
+
+          {/* 검색 입력 */}
+          <div style={s.searchRow}>
+            <input
+              style={s.textInput}
+              type="text"
+              value={query}
+              onChange={(e) => { setQuery(e.target.value); setResults(null); setConfirmName(null); }}
+              placeholder="예: 선유고등학교"
+              onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+              autoFocus
+            />
+            <button style={s.searchBtn} onClick={handleSearch} disabled={!query.trim() || searching || isLoading}>
+              {searching ? "검색 중…" : "검색"}
+            </button>
+          </div>
+
+          {/* 검색 결과 */}
+          {results !== null && !confirmName && (
+            results.length > 0 ? (
+              <>
+                <div style={s.resultList}>
+                  {results.map((school, idx) => (
+                    <div
+                      key={school.schoolId}
+                      style={{ ...s.resultItem, borderBottom: idx === results.length - 1 ? "none" : undefined }}
+                    >
+                      <span style={s.resultName}>{school.name}</span>
+                      <button style={s.joinBtn} disabled={isLoading} onClick={() => onJoinSchool(school.schoolId, school.name)}>
+                        {isLoading ? "처리 중…" : "이 학교로 시작하기"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <button style={s.newSchoolBtn} onClick={() => setConfirmName(query.trim())}>
+                  찾는 학교가 없나요? 새 학교로 등록하기
+                </button>
+              </>
+            ) : (
+              <>
+                <div style={s.resultList}>
+                  <div style={s.noResultBox}>
+                    <strong>"{query.trim()}"</strong> 검색 결과가 없습니다.
+                  </div>
+                </div>
+                <button style={s.newSchoolBtn} onClick={() => setConfirmName(query.trim())}>
+                  새 학교로 등록하기
+                </button>
+              </>
+            )
+          )}
+
+          {/* 새 학교 등록 확인 */}
+          {confirmName && (
+            <div style={s.confirmBox}>
+              <p style={s.confirmText}>
+                <strong>"{confirmName}"</strong>(으)로 새 학교 작업 공간을 생성합니다.<br />
+                계속하시겠습니까?
+              </p>
+              <div style={s.confirmBtns}>
+                <button style={s.confirmOk} disabled={isLoading} onClick={() => onCreateSchool(confirmName)}>
+                  {isLoading ? "등록 중…" : "새 학교로 등록"}
+                </button>
+                <button style={s.confirmCancel} onClick={() => setConfirmName(null)}>
+                  다시 검색
+                </button>
+              </div>
+            </div>
+          )}
+
           {error && <p style={s.errorText}>{error}</p>}
         </div>
       </div>

@@ -95,6 +95,6 @@ function anonymizeGradeXlsx(filename, grade) {
 
 // ── 실행 ──────────────────────────────────────────────────────────
 anonymizeGrade1();
-anonymizeGradeXlsx("[학급별 명렬표] 2학년 1학기 (2026. 5. 14.) (1).xlsx", 2);
-anonymizeGradeXlsx("[학급별 명렬표] 3학년 (2026. 5. 14.) (1).xlsx", 3);
+anonymizeGradeXlsx("[학급별 명렬표] 2학년 1학기 (2026. 5. 14.).xlsx", 2);
+anonymizeGradeXlsx("[학급별 명렬표] 3학년 (2026. 5. 14.).xlsx", 3);
 console.log("완료!");

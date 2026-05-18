@@ -66,40 +66,65 @@ export async function loadUserDoc(uid) {
 }
 
 /**
- * /schools/{schoolId} + /users/{uid} 동시 생성 (guest 최초 등록)
+ * /schools/{schoolId} 존재 여부 확인
+ * @param {string} schoolId
+ * @returns {Promise<{name: string} | null>}
+ */
+export async function loadSchoolDoc(schoolId) {
+  if (!firebaseDb || !schoolId) return null;
+
+  const ref = doc(firebaseDb, "schools", schoolId);
+  const snap = await getDoc(ref);
+
+  if (!snap.exists()) return null;
+
+  return snap.data();
+}
+
+/**
+ * /schoolIndex 전체 fetch → 클라이언트 필터링용
+ * @returns {Promise<Array<{schoolId: string, name: string}>>}
+ */
+export async function fetchSchoolIndex() {
+  if (!firebaseDb) return [];
+  const snap = await getDocs(collection(firebaseDb, "schoolIndex"));
+  return snap.docs.map((d) => ({ schoolId: d.id, name: d.data().name }));
+}
+
+/**
+ * 신규 학교 생성: schools + schoolIndex + users 배치 쓰기, role = school_admin
  * @param {string} uid
  * @param {string} email
  * @param {string} displayName
  * @param {string} schoolName
  * @returns {Promise<{schoolId: string, schoolName: string}>}
  */
-export async function createGuestSchool(uid, email, displayName, schoolName) {
+export async function createSchool(uid, email, displayName, schoolName) {
   if (!firebaseDb) throw new Error("Firestore가 초기화되지 않았습니다.");
 
-  const schoolId = `guest_${uid.slice(0, 8)}`;
+  const schoolId = `school_${uid.slice(0, 8)}`;
   const now = serverTimestamp();
-
   const batch = writeBatch(firebaseDb);
 
-  const schoolRef = doc(firebaseDb, "schools", schoolId);
-  batch.set(schoolRef, {
+  batch.set(doc(firebaseDb, "schools", schoolId), {
     name: schoolName,
-    isGuest: true,
     ownerUid: uid,
     ownerEmail: email,
     createdAt: now,
   });
 
-  const userRef = doc(firebaseDb, "users", uid);
+  batch.set(doc(firebaseDb, "schoolIndex", schoolId), {
+    name: schoolName,
+  });
+
   batch.set(
-    userRef,
+    doc(firebaseDb, "users", uid),
     {
       email,
       displayName: displayName ?? "",
       schoolId,
       schoolName,
-      role: "guest",
-      isGuest: true,
+      role: "school_admin",
       createdAt: now,
       updatedAt: now,
     },
@@ -107,8 +132,26 @@ export async function createGuestSchool(uid, email, displayName, schoolName) {
   );
 
   await batch.commit();
-
   return { schoolId, schoolName };
+}
+
+/**
+ * 기존 학교에 참여: users/{uid}에 schoolId, schoolName, role 업데이트
+ * @param {string} uid
+ * @param {string} email
+ * @param {string} displayName
+ * @param {string} schoolId
+ * @param {string} schoolName
+ */
+export async function joinSchool(uid, email, displayName, schoolId, schoolName) {
+  if (!firebaseDb) throw new Error("Firestore가 초기화되지 않았습니다.");
+  await upsertUserDoc(uid, {
+    email,
+    displayName: displayName ?? "",
+    schoolId,
+    schoolName,
+    role: "school_admin",
+  });
 }
 
 /**
