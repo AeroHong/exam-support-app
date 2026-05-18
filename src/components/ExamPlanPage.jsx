@@ -164,12 +164,15 @@ function calcAutoCount(subject, students, enrollments, planSemester) {
     return gradeStudents.length;
   }
 
-  // 학생선택: subjectId 우선, 없으면 과목명+학년으로 매칭 (동일 과목명 다른 학년 중복 방지)
+  // 과목명 정규화 (공백 제거 + 소문자) — 업로드 순서나 표기 차이에 강인하게
+  const norm = (s) => (s ?? "").replace(/\s+/g, "").toLowerCase();
+
+  // 학생선택: subjectId 우선, 없으면 정규화된 과목명+학년으로 매칭
   const enrolledStudentIds = new Set(
     enrollments
       .filter((e) =>
         (e.subjectId && e.subjectId === subject.id) ||
-        (!e.subjectId && e.subjectName === subject.name && Number(e.grade) === Number(subject.grade))
+        (!e.subjectId && norm(e.subjectName) === norm(subject.name) && Number(e.grade) === Number(subject.grade))
       )
       .map((e) => e.studentId)
   );

@@ -11,6 +11,7 @@ import {
   query,
   serverTimestamp,
   setDoc,
+  where,
   writeBatch,
 } from "firebase/firestore";
 import { firebaseDb } from "./firebase";
@@ -41,7 +42,7 @@ export async function loadTenantData(schoolId) {
   return {
     school: schoolSnap.exists()
       ? { id: schoolSnap.id, ...schoolSnap.data() }
-      : { id: schoolId, name: schoolId, domain: "" },
+      : { id: schoolId, name: "", domain: "" },
     students: mapDocs(studentsSnap),
     enrollments: mapDocs(enrollmentsSnap),
     rooms: mapDocs(roomsSnap),
@@ -67,7 +68,7 @@ export function subscribeTenantData(schoolId, callback) {
   const schoolRef = doc(firebaseDb, "schools", schoolId);
 
   const latestData = {
-    school: { id: schoolId, name: schoolId, domain: "" },
+    school: { id: schoolId, name: "", domain: "" },
     students: [],
     enrollments: [],
     rooms: [],
@@ -94,7 +95,7 @@ export function subscribeTenantData(schoolId, callback) {
   const unsubSchool = onSnapshot(schoolRef, (snap) => {
     latestData.school = snap.exists()
       ? { id: snap.id, ...snap.data() }
-      : { id: schoolId, name: schoolId, domain: "" };
+      : { id: schoolId, name: "", domain: "" };
     loadedFlags.school = true;
     checkAndEmit();
   });
@@ -130,6 +131,81 @@ export function subscribeTenantData(schoolId, callback) {
     unsubRooms();
     unsubSubjects();
   };
+}
+
+// ── 멀티 고사 관리 ──────────────────────────────────────────────────────────
+
+/** 학교의 전체 고사(plan) 목록 조회 (sessions 미포함, 메타데이터만) */
+export async function loadPlanList({ schoolId }) {
+  if (!firebaseDb || !schoolId) return [];
+
+  const snap = await getDocs(collection(firebaseDb, "schools", schoolId, "plans"));
+  return snap.docs
+    .map((d) => ({
+      id: d.id,
+      name: d.data().name ?? "",
+      academicYear: d.data().academicYear ?? null,
+      examType: d.data().examType ?? "",
+      status: d.data().status ?? "draft",
+      semester: d.data().semester ?? null,
+      sessionCount: 0, // 메타만 조회 — 세션 수는 별도 로드 필요 시 추가
+      updatedAt: d.data().updatedAt ?? null,
+      createdAt: d.data().createdAt ?? null,
+      ownerId: d.data().ownerId ?? "",
+    }))
+    .sort((a, b) => {
+      const aTime = a.updatedAt?.seconds ?? 0;
+      const bTime = b.updatedAt?.seconds ?? 0;
+      return bTime - aTime;
+    });
+}
+
+/** 특정 고사(plan) + sessions 로드 */
+export async function loadPlanById({ schoolId, planId }) {
+  if (!firebaseDb || !schoolId || !planId) return null;
+
+  const planRef = doc(firebaseDb, "schools", schoolId, "plans", planId);
+  const planSnap = await getDoc(planRef);
+  if (!planSnap.exists()) return null;
+
+  const sessionsSnap = await getDocs(
+    collection(firebaseDb, "schools", schoolId, "plans", planId, "sessions"),
+  );
+
+  return {
+    id: planSnap.id,
+    ...planSnap.data(),
+    sessions: mapDocs(sessionsSnap),
+  };
+}
+
+/** 고사 보관 (archived) */
+export async function archivePlan({ schoolId, planId }) {
+  if (!firebaseDb || !schoolId || !planId) return;
+  await setDoc(
+    doc(firebaseDb, "schools", schoolId, "plans", planId),
+    { status: "archived", updatedAt: serverTimestamp() },
+    { merge: true },
+  );
+}
+
+/** 고사 삭제 (plan + sessions 하위 컬렉션) */
+export async function deletePlan({ schoolId, planId }) {
+  if (!firebaseDb || !schoolId || !planId) return;
+
+  // sessions 하위 컬렉션 삭제
+  const sessionsSnap = await getDocs(
+    collection(firebaseDb, "schools", schoolId, "plans", planId, "sessions"),
+  );
+  const CHUNK = 500;
+  for (let i = 0; i < sessionsSnap.docs.length; i += CHUNK) {
+    const batch = writeBatch(firebaseDb);
+    sessionsSnap.docs.slice(i, i + CHUNK).forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
+
+  // plan 문서 삭제
+  await deleteDoc(doc(firebaseDb, "schools", schoolId, "plans", planId));
 }
 
 export async function loadLatestPlan({ schoolId, ownerId }) {
@@ -182,6 +258,8 @@ export async function savePlan({ schoolId, ownerId, plan }) {
       schoolId,
       name: plan.name,
       semester: plan.semester ?? null,
+      academicYear: plan.academicYear ?? new Date().getFullYear(),
+      examType: plan.examType ?? "",
       days: plan.days,
       periods: plan.periods ?? [],
       activeFilter: plan.activeFilter,
@@ -223,6 +301,7 @@ export async function saveVersion({ schoolId, ownerId, plan }) {
   const enrollments = mapDocs(enrollmentsSnap);
 
   await addDoc(versionsRef, {
+    planId: plan.id || null,
     planName: plan.name || "이름 없음",
     savedAt: serverTimestamp(),
     savedBy: ownerId,
@@ -232,39 +311,40 @@ export async function saveVersion({ schoolId, ownerId, plan }) {
       ...plan,
       sessions: plan.sessions ?? [],
     },
-    enrollments, // 응시 과목 확정 데이터 포함
+    enrollments,
   });
 
-  // 10개 초과 시 가장 오래된 것 삭제
-  const allSnap = await getDocs(
-    query(versionsRef, orderBy("savedAt", "asc")),
-  );
+  // 해당 고사의 버전만 10개 유지
+  const scopeQuery = plan.id
+    ? query(versionsRef, where("planId", "==", plan.id), orderBy("savedAt", "asc"))
+    : query(versionsRef, orderBy("savedAt", "asc"));
+  const allSnap = await getDocs(scopeQuery);
   if (allSnap.size > MAX_VERSIONS) {
     const toDelete = allSnap.docs.slice(0, allSnap.size - MAX_VERSIONS);
     await Promise.all(toDelete.map((d) => deleteDoc(d.ref)));
   }
 }
 
-/** 수동 저장 스냅샷 목록 조회 */
-export async function loadVersions({ schoolId }) {
+/** 수동 저장 스냅샷 목록 조회 (planId로 스코핑) */
+export async function loadVersions({ schoolId, planId }) {
   if (!firebaseDb || !schoolId) return [];
 
-  const snap = await getDocs(
-    query(
-      collection(firebaseDb, "schools", schoolId, "planVersions"),
-      orderBy("savedAt", "desc"),
-      limit(MAX_VERSIONS),
-    ),
-  );
+  const versionsRef = collection(firebaseDb, "schools", schoolId, "planVersions");
+  const q = planId
+    ? query(versionsRef, where("planId", "==", planId), orderBy("savedAt", "desc"), limit(MAX_VERSIONS))
+    : query(versionsRef, orderBy("savedAt", "desc"), limit(MAX_VERSIONS));
+
+  const snap = await getDocs(q);
 
   return snap.docs.map((d) => ({
     id: d.id,
+    planId: d.data().planId ?? null,
     planName: d.data().planName,
     savedAt: d.data().savedAt,
     dayCount: d.data().dayCount ?? 0,
     sessionCount: d.data().sessionCount ?? 0,
     plan: d.data().plan,
-    enrollments: d.data().enrollments ?? [], // 응시 과목 확정 데이터 포함
+    enrollments: d.data().enrollments ?? [],
   }));
 }
 
@@ -275,19 +355,23 @@ export async function restoreEnrollments({ schoolId, enrollments }) {
   }
 
   const enrollmentsRef = collection(firebaseDb, "schools", schoolId, "enrollments");
+  const CHUNK = 500;
 
   // 기존 enrollments 삭제
   const existingSnap = await getDocs(enrollmentsRef);
-  const batch = writeBatch(firebaseDb);
-  existingSnap.docs.forEach((doc) => {
-    batch.delete(doc.ref);
-  });
+  for (let i = 0; i < existingSnap.docs.length; i += CHUNK) {
+    const batch = writeBatch(firebaseDb);
+    existingSnap.docs.slice(i, i + CHUNK).forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
 
   // 새 enrollments 복구
-  enrollments.forEach((enrollment) => {
-    const enrollmentRef = doc(enrollmentsRef, enrollment.id);
-    batch.set(enrollmentRef, enrollment);
-  });
-
-  await batch.commit();
+  for (let i = 0; i < enrollments.length; i += CHUNK) {
+    const batch = writeBatch(firebaseDb);
+    enrollments.slice(i, i + CHUNK).forEach((enrollment) => {
+      const enrollmentRef = doc(enrollmentsRef, enrollment.id);
+      batch.set(enrollmentRef, enrollment);
+    });
+    await batch.commit();
+  }
 }

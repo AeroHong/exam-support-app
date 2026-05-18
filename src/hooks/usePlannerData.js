@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { getDefaultPlan } from "../data/defaults";
-import { loadLatestPlan, savePlan, saveVersion } from "../lib/firestorePlanner";
+import { loadLatestPlan, loadPlanById, savePlan, saveVersion } from "../lib/firestorePlanner";
 
-export function usePlannerData({ schoolId, ownerId, enabled }) {
+export function usePlannerData({ schoolId, ownerId, planId, enabled }) {
   const [state, setState] = useState({
     status: enabled ? "loading" : "idle",
     plan: getDefaultPlan(schoolId),
@@ -38,7 +38,10 @@ export function usePlannerData({ schoolId, ownerId, enabled }) {
       }));
 
       try {
-        const remotePlan = await loadLatestPlan({ schoolId, ownerId });
+        // planId가 지정되면 특정 고사 로드, 없으면 최신 plan 로드 (후방 호환)
+        const remotePlan = planId
+          ? await loadPlanById({ schoolId, planId })
+          : await loadLatestPlan({ schoolId, ownerId });
         if (cancelled) return;
 
         const loaded = remotePlan ?? getDefaultPlan(schoolId);
@@ -74,7 +77,7 @@ export function usePlannerData({ schoolId, ownerId, enabled }) {
       cancelled = true;
       clearTimeout(autoSaveTimerRef.current);
     };
-  }, [enabled, ownerId, schoolId]);
+  }, [enabled, ownerId, schoolId, planId]);
 
   // persistPlan — Firestore 저장 (수동 + 자동저장 공용)
   const persistPlan = async (plan) => {
@@ -137,7 +140,9 @@ export function usePlannerData({ schoolId, ownerId, enabled }) {
     }));
 
     try {
-      const remotePlan = await loadLatestPlan({ schoolId, ownerId });
+      const remotePlan = planId
+        ? await loadPlanById({ schoolId, planId })
+        : await loadLatestPlan({ schoolId, ownerId });
       const loaded = remotePlan ?? getDefaultPlan(schoolId);
       planRef.current = loaded;
 

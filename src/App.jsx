@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import DashboardPanel from "./components/DashboardPanel";
 import DataManagementPage from "./components/DataManagementPage";
+import ExamDashboard from "./components/ExamDashboard";
 import ExamPlanPage from "./components/ExamPlanPage";
 import LoginScreen from "./components/LoginScreen";
 import PrintManagementPage from "./components/PrintManagementPage";
@@ -14,44 +15,8 @@ import { useAuth } from "./hooks/useAuth";
 import { usePlannerData } from "./hooks/usePlannerData";
 import { useScheduleEngine } from "./hooks/useScheduleEngine";
 import { useTenantData } from "./hooks/useTenantData";
-
-/**
- * 단계별 확정 chain 검증
- * 시험계획(세션 존재) → 일정 확정 → 고사실 확정
- *                    → 대기실 확정
- * 앞 단계가 미확정이면 뒤 단계 확정을 자동 해제
- */
-function validateConfirmationChain(plan) {
-  const sc = { ...(plan.scheduleConfirmed ?? {}) };
-  const wc = { ...(plan.waitingConfirmed  ?? {}) };
-  const rc = { ...(plan.roomConfirmed     ?? {}) };
-  let changed = false;
-
-  ["1", "2", "3"].forEach((grade) => {
-    const hasSessions = plan.sessions.some((s) => String(s.grade) === grade);
-
-    if (!hasSessions) {
-      // 시험계획 미확정 → 일정·고사실 모두 해제
-      if (sc[grade]) { sc[grade] = false; changed = true; }
-      if (rc[grade]) { rc[grade] = false; changed = true; }
-    } else if (!sc[grade]) {
-      // 일정 미확정 → 고사실 해제
-      if (rc[grade]) { rc[grade] = false; changed = true; }
-    }
-  });
-
-  // 대기실: 세션이 있는 학년 중 일정 미확정인 학년이 하나라도 있으면 전체 해제
-  const anyScheduleGap = ["1", "2", "3"].some(
-    (g) => plan.sessions.some((s) => String(s.grade) === g) && !sc[g],
-  );
-  if (anyScheduleGap) {
-    Object.keys(wc).forEach((k) => {
-      if (wc[k]) { wc[k] = false; changed = true; }
-    });
-  }
-
-  return changed ? { scheduleConfirmed: sc, waitingConfirmed: wc, roomConfirmed: rc } : null;
-}
+import { validateConfirmationChain } from "./utils/confirmationChain";
+import { recalcSessionStudentCount } from "./utils/sessionStudentCount";
 
 const PAGES = [
   { key: "data",     label: "기초 데이터" },
@@ -92,6 +57,9 @@ function SaveBadge({ status }) {
 
 function App() {
   const auth = useAuth();
+  const demoMode = auth.profile?.role === "demo";
+  const [demoSchoolMode, setDemoSchoolMode] = useState(false); // super admin이 demo school UI에 진입한 상태
+  const [selectedPlanId, setSelectedPlanId] = useState(null);
   const [activePage, setActivePage] = useState("data");
   const [selectedMetric, setSelectedMetric] = useState(null);
   const [draftStudents, setDraftStudents] = useState([]);
@@ -99,32 +67,47 @@ function App() {
   const [versionModalOpen, setVersionModalOpen] = useState(false);
   const [dataChangeLog, setDataChangeLog] = useState(null); // { grade, delta, type, affectedGrades }
 
+  // super admin이 demo school에 접속 중이면 demo-school 사용
+  const effectiveSchoolId = demoSchoolMode ? "demo-school" : auth.profile?.schoolId;
+
   const tenantData = useTenantData({
-    schoolId: auth.profile?.schoolId,
+    schoolId: effectiveSchoolId,
     enabled: auth.status === "signed_in",
   });
   const planner = usePlannerData({
-    schoolId: auth.profile?.schoolId,
+    schoolId: effectiveSchoolId,
     ownerId: auth.user?.uid,
-    enabled: auth.status === "signed_in",
+    planId: selectedPlanId,
+    enabled: auth.status === "signed_in" && selectedPlanId !== null,
   });
   const plan = planner.plan;
 
-  // draftStudents/Enrollments는 기초데이터 탭에서 업로드 직후 미리보기용
-  const effectiveStudents = draftStudents.length > 0 ? draftStudents : tenantData.students;
-  const effectiveEnrollments = draftEnrollments.length > 0 ? draftEnrollments : tenantData.enrollments;
+  const baseStudents = tenantData.students;
+  const baseEnrollments = tenantData.enrollments;
+  const baseRooms = tenantData.rooms;
+  const baseSubjects = tenantData.subjects;
+  const effectiveStudents = draftStudents.length > 0 ? draftStudents : baseStudents;
+  const effectiveEnrollments = draftEnrollments.length > 0 ? draftEnrollments : baseEnrollments;
 
   const engine = useScheduleEngine({
     sessions: plan.sessions,
     students: effectiveStudents,
     enrollments: effectiveEnrollments,
-    rooms: tenantData.rooms,
+    rooms: baseRooms,
   });
 
   const sessionsById = useMemo(
     () => Object.fromEntries(plan.sessions.map((session) => [session.id, session])),
     [plan.sessions],
   );
+
+  // 로그아웃 시 planId 초기화
+  useEffect(() => {
+    if (auth.status === "signed_out") {
+      setSelectedPlanId(null);
+      setDemoSchoolMode(false);
+    }
+  }, [auth.status]);
 
   // 플랜 로드 시 확정 chain 검증 — 앞 단계 미확정이면 뒤 단계 자동 해제
   const validatedPlanIdRef = useRef(null);
@@ -205,36 +188,13 @@ function App() {
     if (tenantData.loadedAt !== prevLoadedAtRef.current && plan.sessions.length > 0) {
       prevLoadedAtRef.current = tenantData.loadedAt;
 
-      planner.setPlan((cur) => {
-        const sessions = cur.sessions.map((session) => {
-          let newCount;
-
-          if (session.isRequired) {
-            // 학교지정: 위탁 학생 제외
-            newCount = tenantData.students.filter(
-              (s) => String(s.grade) === String(session.grade) && s.examStatus !== "delegation"
-            ).length;
-          } else {
-            // 학생선택: enrollment에 있는 학생 중 위탁이 아닌 학생만 카운트
-            const enrolledStudentIds = new Set(
-              tenantData.enrollments
-                .filter(
-                  (e) =>
-                    String(e.grade) === String(session.grade) &&
-                    (e.subjectName === session.subjectName ||
-                      (e.subjectId && e.subjectId === session.subjectId))
-                )
-                .map((e) => e.studentId)
-            );
-            newCount = tenantData.students.filter(
-              (s) => enrolledStudentIds.has(s.id) && s.examStatus !== "delegation"
-            ).length;
-          }
-
-          return { ...session, studentCount: newCount };
-        });
-        return { ...cur, sessions };
-      });
+      planner.setPlan((cur) => ({
+        ...cur,
+        sessions: cur.sessions.map((session) => ({
+          ...session,
+          studentCount: recalcSessionStudentCount(session, tenantData.students, tenantData.enrollments),
+        })),
+      }));
     }
   }, [tenantData.loadedAt, tenantData.students, tenantData.enrollments, plan.sessions.length, planner]);
 
@@ -249,33 +209,8 @@ function App() {
     planner.setPlan((cur) => {
       const sessions = cur.sessions.map((session) => {
         if (!affectedGrades.includes(String(session.grade))) return session;
-        // statusSpecial(특수/별도고사실 변경)은 응시 인원수에 영향 없음
         if (type === "statusSpecial") return session;
-
-        let newCount;
-        if (session.isRequired) {
-          // 학교지정: 위탁 학생 제외
-          newCount = ns.filter(
-            (s) => String(s.grade) === String(session.grade) && s.examStatus !== "delegation"
-          ).length;
-        } else {
-          // 학생선택: enrollment에 있는 학생 중 위탁이 아닌 학생만 카운트
-          const enrolledStudentIds = new Set(
-            ne
-              .filter(
-                (e) =>
-                  String(e.grade) === String(session.grade) &&
-                  (e.subjectName === session.subjectName ||
-                    (e.subjectId && e.subjectId === session.subjectId))
-              )
-              .map((e) => e.studentId)
-          );
-          newCount = ns.filter(
-            (s) => enrolledStudentIds.has(s.id) && s.examStatus !== "delegation"
-          ).length;
-        }
-
-        return { ...session, studentCount: newCount };
+        return { ...session, studentCount: recalcSessionStudentCount(session, ns, ne) };
       });
 
       const sc = { ...(cur.scheduleConfirmed ?? {}) };
@@ -386,22 +321,50 @@ function App() {
     ? engine.metricStudentDetails[selectedMetric] ?? []
     : [];
 
-  if (auth.status !== "signed_in") {
+  if (!demoMode && auth.status !== "signed_in") {
     return (
       <LoginScreen
         status={auth.status}
         error={auth.error}
         onSignIn={auth.signIn}
         onSubmitSchoolName={auth.submitSchoolName}
+        onDemo={auth.signInDemo}
       />
     );
   }
 
-  if (auth.profile?.role === "super_admin") {
-    return <SuperAdminPage onLogout={auth.logout} />;
+  if (auth.profile?.role === "super_admin" && !demoSchoolMode) {
+    return (
+      <SuperAdminPage
+        onLogout={auth.logout}
+        onEnterDemoSchool={() => { setDemoSchoolMode(true); setSelectedPlanId(null); }}
+      />
+    );
   }
 
-  const schoolName = tenantData.school.name || auth.profile?.schoolId || "";
+  const schoolName = tenantData.school.name || auth.profile?.schoolName || (demoSchoolMode ? "한빛고등학교" : "");
+
+  const currentSchoolId = effectiveSchoolId;
+  const currentOwnerId = auth.user?.uid;
+  const currentUserName = demoMode ? "데모 사용자" : (auth.user?.displayName ?? auth.user?.email);
+
+  // 고사 미선택 → 대시보드
+  if (selectedPlanId === null) {
+    return (
+      <ExamDashboard
+        schoolId={currentSchoolId}
+        ownerId={currentOwnerId}
+        schoolName={schoolName}
+        userName={currentUserName}
+        onSelectExam={(planId) => {
+          setSelectedPlanId(planId);
+          setActivePage("data");
+          setDataChangeLog(null);
+        }}
+        onLogout={demoSchoolMode ? () => { setDemoSchoolMode(false); setSelectedPlanId(null); } : auth.logout}
+      />
+    );
+  }
 
   return (
     <div style={s.page}>
@@ -415,29 +378,25 @@ function App() {
           <div style={s.headerRight}>
             {plan.name && <span style={s.planName}>{plan.name}</span>}
             <SaveBadge status={planner.saveStatus} />
-            <span style={s.userChip}>{auth.user?.displayName ?? auth.user?.email}</span>
-            <button style={s.outlineBtn} onClick={() => setVersionModalOpen(true)}>불러오기</button>
+            <span style={s.userChip}>{currentUserName}</span>
+            <button style={s.outlineBtn} onClick={() => setSelectedPlanId(null)}>← 시험 목록</button>
+            {!demoMode && <button style={s.outlineBtn} onClick={() => setVersionModalOpen(true)}>불러오기</button>}
             <button
               style={s.primaryBtn}
               onClick={async () => {
                 await planner.savePlan(plan);
-                planner.createVersion(plan);
+                if (!demoMode) planner.createVersion(plan);
               }}
               disabled={planner.saveStatus === "saving"}
             >
               저장
             </button>
             <button
-              style={{ ...s.outlineBtn, color: "#dc2626", borderColor: "#fecaca" }}
-              onClick={() => {
-                if (window.confirm("현재 작업본을 초기화하시겠습니까?\n\n저장된 기록은 '불러오기'에서 복원할 수 있습니다.")) {
-                  planner.resetPlan();
-                }
-              }}
+              style={s.outlineBtn}
+              onClick={demoSchoolMode ? () => { setDemoSchoolMode(false); setSelectedPlanId(null); } : auth.logout}
             >
-              초기화
+              {demoSchoolMode ? "← 관리자 콘솔" : demoMode ? "데모 종료" : "로그아웃"}
             </button>
-            <button style={s.outlineBtn} onClick={auth.logout}>로그아웃</button>
           </div>
         </div>
         <nav style={s.navRow}>
@@ -483,18 +442,18 @@ function App() {
       {/* ── 페이지 콘텐츠 ── */}
       <main>
         {activePage === "data" ? (
-          <DataManagementPage schoolId={auth.profile?.schoolId} students={effectiveStudents} subjects={tenantData.subjects ?? []} onDataChanged={handleDataChanged} onReloadStudents={tenantData.reload} />
+          <DataManagementPage schoolId={currentSchoolId} students={effectiveStudents} subjects={baseSubjects} onDataChanged={handleDataChanged} onReloadStudents={tenantData.reload} />
         ) : null}
 
         {activePage === "examplan" ? (
           <ExamPlanPage
             plan={plan}
             onPlanChange={(patch) => planner.setPlan((current) => ({ ...current, ...patch }))}
-            subjects={tenantData.subjects ?? []}
+            subjects={baseSubjects}
             students={effectiveStudents}
             enrollments={effectiveEnrollments}
-            studentsLoadedAt={tenantData.loadedAt}
-            onReloadStudents={tenantData.reload}
+            studentsLoadedAt={demoMode ? Date.now() : tenantData.loadedAt}
+            onReloadStudents={demoMode ? () => {} : tenantData.reload}
             examPlanConfirmed={plan.examPlanConfirmed ?? {}}
             onConfirmExamPlan={handleConfirmExamPlan}
             onDeconfirmExamPlan={handleDeconfirmExamPlan}
@@ -507,8 +466,8 @@ function App() {
             tenantData={{
               students: effectiveStudents,
               enrollments: effectiveEnrollments,
-              rooms: tenantData.rooms,
-              subjects: tenantData.subjects,
+              rooms: baseRooms,
+              subjects: baseSubjects,
             }}
             schoolName={schoolName}
           />
@@ -519,8 +478,8 @@ function App() {
             plan={plan}
             students={effectiveStudents}
             enrollments={effectiveEnrollments}
-            rooms={tenantData.rooms}
-            subjects={tenantData.subjects ?? []}
+            rooms={baseRooms}
+            subjects={baseSubjects}
             examPlanReady={examPlanReady}
             scheduleConfirmed={plan.scheduleConfirmed ?? {}}
             onUpdateWaitingAssignments={handleUpdateWaitingAssignments}
@@ -533,7 +492,7 @@ function App() {
         {activePage === "rooms" ? (
           <RoomAssignmentPage
             sessions={plan.sessions}
-            rooms={tenantData.rooms}
+            rooms={baseRooms}
             students={effectiveStudents}
             enrollments={effectiveEnrollments}
             examPlanReady={examPlanReady}
@@ -613,7 +572,7 @@ function App() {
 
       {versionModalOpen && (
         <VersionBrowserModal
-          schoolId={auth.profile?.schoolId}
+          schoolId={currentSchoolId}
           currentPlanId={plan.id}
           onLoad={async (versionData) => {
             planner.setPlan({ ...versionData.plan, id: plan.id || versionData.plan.id });
@@ -622,7 +581,7 @@ function App() {
             if (versionData.enrollments && versionData.enrollments.length > 0) {
               const { restoreEnrollments } = await import("./lib/firestorePlanner");
               await restoreEnrollments({
-                schoolId: auth.profile?.schoolId,
+                schoolId: currentSchoolId,
                 enrollments: versionData.enrollments,
               });
               // tenant 데이터 새로고침

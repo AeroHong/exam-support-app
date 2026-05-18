@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-function LoginScreen({ status, error, onSignIn, onSubmitSchoolName }) {
+function LoginScreen({ status, error, onSignIn, onSubmitSchoolName, onDemo }) {
   const [schoolName, setSchoolName] = useState("");
   const isLoading = status === "loading" || status === "resolving";
 
@@ -55,6 +55,19 @@ function LoginScreen({ status, error, onSignIn, onSubmitSchoolName }) {
           <button type="button" className="primary-button" disabled={isLoading} onClick={onSignIn}>
             {isLoading ? "로그인 처리 중" : "Google로 로그인"}
           </button>
+          {onDemo && (
+            <button
+              type="button"
+              style={{
+                padding: "0.6rem 1.2rem", backgroundColor: "#fff", color: "#4f46e5",
+                border: "1px solid #c7d2fe", borderRadius: "8px", cursor: "pointer",
+                fontSize: "0.9rem", fontWeight: 600, width: "100%", marginTop: "0.5rem",
+              }}
+              onClick={onDemo}
+            >
+              데모 체험 (로그인 없이)
+            </button>
+          )}
           {error ? <p className="login-error">{error}</p> : null}
         </div>
       </section>

@@ -3,6 +3,7 @@ import {
   browserLocalPersistence,
   onAuthStateChanged,
   setPersistence,
+  signInAnonymously,
   signInWithPopup,
   signOut,
 } from "firebase/auth";
@@ -15,7 +16,7 @@ import {
   upsertUserDoc,
 } from "../lib/firestoreSchool";
 
-const SUPER_ADMIN_EMAIL = "hckgood@gmail.com";
+const SUPER_ADMIN_EMAIL = import.meta.env.VITE_SUPER_ADMIN_EMAIL ?? "";
 
 const INITIAL_STATE = {
   status: "loading",
@@ -80,6 +81,27 @@ export function useAuth() {
       }
 
       try {
+        // ── 익명 로그인(데모 모드) 처리 ──────────────────────────────────
+        if (user.isAnonymous) {
+          if (!cancelled) {
+            setAuthState({
+              status: "signed_in",
+              user,
+              profile: {
+                email: "",
+                displayName: "데모 사용자",
+                schoolId: "demo-school",
+                schoolName: "한빛고등학교",
+                role: "demo",
+                isGuest: false,
+              },
+              error: null,
+              warning: null,
+            });
+          }
+          return;
+        }
+
         const email = user.email ?? "";
         const domain = email.split("@")[1]?.toLowerCase() ?? "";
 
@@ -219,6 +241,23 @@ export function useAuth() {
     }
   }, []);
 
+  // ── signInDemo (익명 로그인) ─────────────────────────────────────────────
+  const signInDemo = useCallback(async () => {
+    if (!firebaseAuth) return;
+    setAuthState((prev) => ({ ...prev, status: "loading", error: null, warning: null }));
+    try {
+      await signInAnonymously(firebaseAuth);
+      // onAuthStateChanged가 demo profile을 주입
+    } catch (error) {
+      setAuthState((prev) => ({
+        ...prev,
+        status: "signed_out",
+        error: error instanceof Error ? error.message : "데모 로그인에 실패했습니다.",
+        warning: null,
+      }));
+    }
+  }, []);
+
   // ── logout ──────────────────────────────────────────────────────────────
   const logout = useCallback(async () => {
     if (!firebaseAuth) return;
@@ -291,6 +330,7 @@ export function useAuth() {
     error: authState.error,
     warning: authState.warning,
     signIn,
+    signInDemo,
     logout,
     submitSchoolName,
   };

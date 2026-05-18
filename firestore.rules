@@ -10,6 +10,11 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email == 'hckgood@gmail.com';
     }
 
+    // 익명 로그인 사용자 (데모 모드)
+    function isDemoUser() {
+      return isSignedIn() && request.auth.token.firebase.sign_in_provider == 'anonymous';
+    }
+
     function userDoc() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
@@ -38,8 +43,11 @@ service cloud.firestore {
     }
 
     // 학교 데이터: super_admin 전체 접근, 일반 사용자는 본인 학교만
+    // demo-school: 인증된 사용자(익명 포함) 읽기 허용, 쓰기 금지
     match /schools/{schoolId} {
-      allow read: if isSuperAdmin() || (isSignedIn() && mySchoolId() == schoolId);
+      allow read: if isSuperAdmin()
+        || (isSignedIn() && mySchoolId() == schoolId)
+        || (isSignedIn() && schoolId == "demo-school");
       allow create: if isSuperAdmin() ||
         (isSignedIn() &&
          schoolId.matches('guest_.*') &&
@@ -47,7 +55,12 @@ service cloud.firestore {
       allow update, delete: if isSuperAdmin() || (isSignedIn() && mySchoolId() == schoolId);
 
       match /{subcollection=**} {
-        allow read, write: if isSuperAdmin() || (isSignedIn() && mySchoolId() == schoolId);
+        allow read: if isSuperAdmin()
+          || (isSignedIn() && mySchoolId() == schoolId)
+          || (isSignedIn() && schoolId == "demo-school");
+        allow write: if isSuperAdmin()
+          || (isSignedIn() && mySchoolId() == schoolId)
+          || (isDemoUser() && schoolId == "demo-school");
       }
     }
   }

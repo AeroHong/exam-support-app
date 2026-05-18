@@ -40,11 +40,11 @@ export default function VersionBrowserModal({ schoolId, currentPlanId, onLoad, o
   useEffect(() => {
     setLoading(true);
     setError(null);
-    loadVersions({ schoolId })
+    loadVersions({ schoolId, planId: currentPlanId })
       .then(setVersions)
       .catch(() => setError("저장 기록을 불러오지 못했습니다."))
       .finally(() => setLoading(false));
-  }, [schoolId]);
+  }, [schoolId, currentPlanId]);
 
   return (
     <div style={s.backdrop} onClick={(e) => e.target === e.currentTarget && onClose()}>

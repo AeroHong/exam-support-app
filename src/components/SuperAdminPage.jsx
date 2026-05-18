@@ -23,7 +23,7 @@ const EMPTY_SCHOOL = { schoolId: "", schoolName: "" };
 const EMPTY_DOMAIN = { domain: "", schoolId: "", schoolName: "" };
 const EMPTY_EMAIL = { email: "", schoolId: "", schoolName: "" };
 
-function SuperAdminPage({ onLogout }) {
+function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
   const [activeTab, setActiveTab] = useState("schools");
 
   // ─── 학교 관리 상태 ──────────────────────────────────────────────────────
@@ -248,9 +248,16 @@ function SuperAdminPage({ onLogout }) {
           <p className="eyebrow">Super Admin</p>
           <h2 className="mt-1 text-2xl font-extrabold">시스템 관리 콘솔</h2>
         </div>
-        <button type="button" className="secondary-button text-sm" onClick={onLogout}>
-          로그아웃
-        </button>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          {onEnterDemoSchool && (
+            <button type="button" className="primary-button text-sm" onClick={onEnterDemoSchool}>
+              데모 학교 접속
+            </button>
+          )}
+          <button type="button" className="secondary-button text-sm" onClick={onLogout}>
+            로그아웃
+          </button>
+        </div>
       </div>
 
       {/* 탭 */}
