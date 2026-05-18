@@ -311,6 +311,7 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
                       <th>학교명</th>
                       <th>구분</th>
                       <th>소유자 이메일</th>
+                      <th>등록일</th>
                       <th></th>
                     </tr>
                   </thead>
@@ -330,6 +331,11 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
                         </td>
                         <td className="text-sm text-slate-500">
                           {school.ownerEmail || "—"}
+                        </td>
+                        <td className="text-sm text-slate-400">
+                          {school.createdAt?.toDate
+                            ? school.createdAt.toDate().toLocaleDateString("ko-KR")
+                            : "—"}
                         </td>
                         <td>
                           <button
