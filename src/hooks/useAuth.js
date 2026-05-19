@@ -13,6 +13,8 @@ import {
   joinSchool,
   loadSchoolDoc,
   loadUserDoc,
+  lookupSchoolByDomain,
+  lookupSchoolByEmail,
   upsertUserDoc,
 } from "../lib/firestoreSchool";
 
@@ -155,8 +157,9 @@ export function useAuth() {
           return;
         }
 
-        // ── 학교 조회: 기존 사용자 문서 → 학교 실존 검증 ─────────────────
+        // ── 학교 조회: 기존 userDoc → 도메인(레거시) → 이메일(레거시) ────
         let school = null;
+        const domain = email.split("@")[1]?.toLowerCase() ?? "";
 
         if (existingUserDoc?.schoolId) {
           const schoolData = await loadSchoolDoc(existingUserDoc.schoolId);
@@ -166,10 +169,14 @@ export function useAuth() {
               schoolName: schoolData.name ?? existingUserDoc.schoolName ?? "",
             };
           } else {
-            // 학교가 삭제됨 → userDoc schoolId 초기화 후 학교 선택 화면으로
+            // 학교가 삭제됨 → userDoc schoolId 초기화
             await upsertUserDoc(user.uid, { schoolId: null, schoolName: "" });
           }
         }
+
+        // userDoc에 schoolId가 없는 경우 레거시 매핑 조회
+        if (!school) school = await lookupSchoolByDomain(domain);
+        if (!school) school = await lookupSchoolByEmail(email);
 
         // ── 학교 찾음 → school_admin으로 로그인 완료 ─────────────────────
         if (school) {

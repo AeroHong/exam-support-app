@@ -49,8 +49,8 @@ const s = {
   th:          { padding: "0.5rem 0.75rem", fontWeight: 700, color: "#374151", textAlign: "left", borderBottom: "2px solid #e5e7eb", fontSize: "0.8rem", whiteSpace: "nowrap" },
   thRight:     { padding: "0.5rem 0.75rem", fontWeight: 700, color: "#374151", textAlign: "right", borderBottom: "2px solid #e5e7eb" },
   tr:          { borderBottom: "1px solid #f3f4f6" },
-  td:          { padding: "0.4rem 0.75rem", color: "#111827", verticalAlign: "middle" },
-  tdMuted:     { padding: "0.4rem 0.75rem", color: "#6b7280", fontSize: "0.82rem", verticalAlign: "middle" },
+  td:          { padding: "0.4rem 0.75rem", color: "#111827", verticalAlign: "middle", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  tdMuted:     { padding: "0.4rem 0.75rem", color: "#6b7280", fontSize: "0.82rem", verticalAlign: "middle", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   tdRight:     { padding: "0.4rem 0.75rem", textAlign: "right", verticalAlign: "middle", whiteSpace: "nowrap" },
   emptyRow:    { textAlign: "center", padding: "2.5rem", color: "#9ca3af", fontSize: "0.9rem" },
 
@@ -1154,6 +1154,17 @@ export default function SubjectsTab({ schoolId, readOnly = false }) {
 
       {/* 테이블 */}
       <table style={s.table}>
+        <colgroup>
+          <col />                              {/* 구분 - 배지 길이에 자동 맞춤 */}
+          <col style={{ width: "128px" }} />  {/* 교과군 */}
+          <col style={{ width: "72px" }} />   {/* 과목구분 */}
+          <col style={{ width: "9999px" }} /> {/* 과목명 - 나머지 전부 */}
+          <col style={{ width: "88px" }} />   {/* 과목코드 */}
+          <col style={{ width: "48px" }} />   {/* 학점 */}
+          <col style={{ width: "118px" }} />  {/* 개설정보 */}
+          <col style={{ width: "78px" }} />   {/* 입학년도 */}
+          <col style={{ width: "112px" }} />  {/* 작업 */}
+        </colgroup>
         <thead style={s.thead}>
           <tr>
             <th style={s.th}>구분</th>

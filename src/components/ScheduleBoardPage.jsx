@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { addMinutes } from "../utils/timeUtils";
 import {
   STRATEGIES,
@@ -144,6 +144,24 @@ const s = {
   sBadgeWarn: { fontSize: "0.72rem", fontWeight: 700, backgroundColor: "#fef3c7", color: "#b45309", borderRadius: "999px", padding: "0.15rem 0.55rem" },
   sBadgeInfo: { fontSize: "0.72rem", fontWeight: 700, backgroundColor: "#dbeafe", color: "#1d4ed8", borderRadius: "999px", padding: "0.15rem 0.55rem" },
 
+  // 시간 조정 UI
+  timeEditBtn:    { fontSize: "0.62rem", color: "#6b7280", background: "none", border: "none", cursor: "pointer", padding: "1px 3px", lineHeight: 1, marginLeft: "auto" },
+  badgeStudy:     { fontSize: "0.58rem", fontWeight: 700, backgroundColor: "#fef3c7", color: "#92400e", borderRadius: "3px", padding: "0 0.28rem" },
+  timeEditPanel:  { borderTop: "1px dashed #c7d2fe", marginTop: "0.3rem", paddingTop: "0.3rem" },
+  timeEditMeta:   { fontSize: "0.65rem", color: "#6b7280", marginBottom: "0.25rem", lineHeight: 1.4 },
+  stepperRow:     { display: "flex", alignItems: "center", gap: "0.25rem", marginBottom: "0.25rem" },
+  stepLabel:      { fontSize: "0.68rem", color: "#374151", fontWeight: 600, flexShrink: 0 },
+  stepBtn:        { width: "22px", height: "22px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.7rem", fontWeight: 700, backgroundColor: "#f3f4f6", color: "#374151", border: "1px solid #d1d5db", borderRadius: "4px", cursor: "pointer", padding: 0, lineHeight: 1 },
+  stepVal:        { fontSize: "0.8rem", fontWeight: 700, minWidth: "30px", textAlign: "center", color: "#111827" },
+  timeEditBtns:   { display: "flex", gap: "0.25rem" },
+  saveTimeBtn:    { flex: 1, padding: "0.22rem 0", backgroundColor: "#4f46e5", color: "#fff", border: "none", borderRadius: "5px", fontSize: "0.72rem", fontWeight: 600, cursor: "pointer" },
+  cancelTimeBtn:  { flex: 1, padding: "0.22rem 0", backgroundColor: "#fff", color: "#6b7280", border: "1px solid #d1d5db", borderRadius: "5px", fontSize: "0.72rem", cursor: "pointer" },
+  // 타 학년 종료 시간 참조
+  crossGradeWrap: { borderTop: "1px dashed #e5e7eb", marginTop: "0.2rem", paddingTop: "0.2rem" },
+  crossGradeRow:  { fontSize: "0.6rem", color: "#6b7280", display: "flex", gap: "0.35rem", flexWrap: "wrap" },
+  crossGradeEarly: { color: "#0891b2", fontWeight: 600 }, // 타 학년이 더 일찍 끝남 (▲)
+  crossGradeLate:  { color: "#dc2626", fontWeight: 600 }, // 타 학년이 더 늦게 끝남 (▼ → 자습 필요)
+
   // 학생 명단 모달
   modalOverlay: { position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.35)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" },
   modalBox:     { backgroundColor: "#fff", borderRadius: "12px", width: "340px", maxHeight: "70vh", display: "flex", flexDirection: "column", boxShadow: "0 8px 32px rgba(0,0,0,0.18)" },
@@ -176,6 +194,28 @@ function heatColor(value, max) {
   return `rgb(${r},${g},${b})`;
 }
 
+// 자습 시간을 포함한 종료 시각 계산
+function calcEndTime(session) {
+  const selfStudy = session.selfStudyMinutes || 0;
+  const base = session.startTime || "";
+  if (!base) return "";
+  return addMinutes(addMinutes(base, selfStudy), session.duration ?? 50);
+}
+
+// 같은 슬롯의 타 학년 세션 종료 시각 목록
+function getCrossGradeEndTimes(allSessions, dayId, periodId, currentGrade) {
+  const byGrade = {};
+  for (const s of allSessions) {
+    if (s.dayId !== dayId || s.periodId !== periodId || String(s.grade) === String(currentGrade) || !s.startTime) continue;
+    const g = String(s.grade);
+    const end = calcEndTime(s);
+    if (!byGrade[g] || end > byGrade[g]) byGrade[g] = end; // 학년당 가장 늦은 종료
+  }
+  return Object.entries(byGrade)
+    .sort(([a], [b]) => Number(a) - Number(b))
+    .map(([grade, endTime]) => ({ grade, endTime }));
+}
+
 // ── 메인 컴포넌트 ─────────────────────────────────────────────────────────────
 
 export default function ScheduleBoardPage({
@@ -195,6 +235,7 @@ export default function ScheduleBoardPage({
   const [modal, setModal]             = useState(null);        // 학생 명단 모달
   const [manuallyPlacedIds, setManuallyPlacedIds] = useState(new Set()); // 수동 배치 세션 ID 추적
   const [matrixOpen, setMatrixOpen] = useState(true);
+  const [editingTimeId, setEditingTimeId] = useState(null); // 시간 조정 인라인 편집 중인 세션
 
   // 현재 학년 세션
   const gradeSessions = useMemo(
@@ -547,6 +588,8 @@ export default function ScheduleBoardPage({
                   const dStats       = dayStatsMap[day.id];
                   const pStat        = dStats?.periodStats?.[period.id];
                   const conflictsInSlot = dStats?.conflicts ?? new Set();
+                  const crossGrades  = getCrossGradeEndTimes(sessions, day.id, period.id, gradeFilter);
+                  const confirmed    = scheduleConfirmed?.[gradeFilter] ?? false;
 
                   return (
                     <div key={slotKey} style={s.cell(isOver, valid)}
@@ -562,6 +605,11 @@ export default function ScheduleBoardPage({
                           onDragStart={() => setDragId(session.id)}
                           onDragEnd={() => setDragId(null)}
                           onRemove={() => handleRemoveFromBoard(session.id)}
+                          isEditingTime={editingTimeId === session.id}
+                          onToggleTimeEdit={() => setEditingTimeId((prev) => prev === session.id ? null : session.id)}
+                          onAdjustTime={(sid, mins) => { onSessionChange(sid, { selfStudyMinutes: mins }); setEditingTimeId(null); }}
+                          confirmed={confirmed}
+                          crossGradeEndTimes={crossGrades}
                         />
                       ))}
                       {pStat && (pStat.testingCount > 0 || pStat.waitingCount > 0) && (
@@ -763,7 +811,18 @@ export default function ScheduleBoardPage({
 
 // ── 세션 카드 컴포넌트 ────────────────────────────────────────────────────────
 
-function SessionCard({ session, variant, isConflict, isManual, isDragging, onDragStart, onDragEnd, onRemove }) {
+function SessionCard({
+  session, variant, isConflict, isManual, isDragging,
+  onDragStart, onDragEnd, onRemove,
+  isEditingTime, onToggleTimeEdit, onAdjustTime,
+  confirmed, crossGradeEndTimes,
+}) {
+  const [localStudy, setLocalStudy] = useState(session.selfStudyMinutes || 0);
+
+  useEffect(() => {
+    setLocalStudy(session.selfStudyMinutes || 0);
+  }, [session.selfStudyMinutes]);
+
   if (variant === "palette") {
     return (
       <div draggable style={s.palCard(isDragging)} onDragStart={onDragStart} onDragEnd={onDragEnd}>
@@ -777,24 +836,103 @@ function SessionCard({ session, variant, isConflict, isManual, isDragging, onDra
     );
   }
 
-  const startTime = session.startTime || "";
-  const endTime   = startTime ? addMinutes(startTime, session.duration ?? 50) : "";
+  const selfStudy       = session.selfStudyMinutes || 0;
+  const baseStart       = session.startTime || "";
+  const examStart       = baseStart && selfStudy > 0 ? addMinutes(baseStart, selfStudy) : baseStart;
+  const endTime         = examStart ? addMinutes(examStart, session.duration ?? 50) : "";
+
+  // 인라인 편집 중 미리보기용
+  const previewExamStart = baseStart && localStudy > 0 ? addMinutes(baseStart, localStudy) : baseStart;
+  const previewEnd       = previewExamStart ? addMinutes(previewExamStart, session.duration ?? 50) : "";
+
+  // 타 학년과의 종료 시각 차이
+  function diffLabel(otherEnd) {
+    if (!endTime || !otherEnd) return null;
+    const { toMinutes } = { toMinutes: (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; } };
+    const diff = toMinutes(endTime) - toMinutes(otherEnd);
+    if (diff === 0) return { text: "동일", style: { fontSize: "0.6rem", color: "#059669", fontWeight: 600 } };
+    if (diff > 0) return { text: `▲${diff}분`, style: s.crossGradeEarly }; // 내가 더 늦게 끝남
+    return { text: `▼${Math.abs(diff)}분`, style: s.crossGradeLate };      // 타 학년이 더 늦게 끝남 → 자습 필요
+  }
 
   return (
-    <div draggable style={s.boardCard(isConflict, isManual)} onDragStart={onDragStart} onDragEnd={onDragEnd}>
-      {onRemove && <button style={s.removeBtn} onClick={onRemove} title="배치 취소">✕</button>}
+    <div
+      draggable={!isEditingTime}
+      style={s.boardCard(isConflict, isManual)}
+      onDragStart={isEditingTime ? undefined : onDragStart}
+      onDragEnd={onDragEnd}
+    >
+      {onRemove && !isEditingTime && (
+        <button style={s.removeBtn} onClick={onRemove} title="배치 취소">✕</button>
+      )}
+
+      {/* 과목명 */}
       <p style={s.boardCardName}>
         {isConflict && <span style={s.conflictDot} title="수강생 중복 충돌" />}
         {session.subjectName}
       </p>
+
+      {/* 인원 + 시간 */}
       <p style={s.boardCardMeta}>
-        {session.studentCount ?? 0}명{startTime ? ` · ${startTime}–${endTime}` : ""}
+        {session.studentCount ?? 0}명
+        {examStart ? ` · ${examStart}–${endTime}` : ""}
       </p>
-      <div style={{ marginTop: "0.12rem" }}>
+
+      {/* 배지 행 + 시간 조정 버튼 */}
+      <div style={{ marginTop: "0.12rem", display: "flex", alignItems: "center", flexWrap: "wrap", gap: "0.2rem" }}>
         {isManual    && <span style={s.badgeManual}>수동</span>}
         {session.isRequired && <span style={s.badgeReq}>지정</span>}
         {session.isEssay    && <span style={s.badgeEssay}>서논술</span>}
+        {selfStudy > 0 && <span style={s.badgeStudy}>자습{selfStudy}분</span>}
+        {baseStart && !confirmed && (
+          <button
+            style={{ ...s.timeEditBtn, marginLeft: "auto" }}
+            title="시험 시작 시간 조정"
+            onClick={(e) => { e.stopPropagation(); onToggleTimeEdit?.(); }}
+          >
+            ⏱
+          </button>
+        )}
       </div>
+
+      {/* 인라인 시간 조정 패널 */}
+      {isEditingTime && (
+        <div style={s.timeEditPanel} onClick={(e) => e.stopPropagation()}>
+          <p style={s.timeEditMeta}>
+            교시 시작: {baseStart}
+            {localStudy > 0 && ` → 시험: ${previewExamStart}`}
+            {" → 종료: "}{previewEnd || "—"}
+          </p>
+          <div style={s.stepperRow}>
+            <span style={s.stepLabel}>자습</span>
+            <button style={s.stepBtn} onClick={() => setLocalStudy((m) => Math.max(0, m - 5))}>−5</button>
+            <span style={s.stepVal}>{localStudy}분</span>
+            <button style={s.stepBtn} onClick={() => setLocalStudy((m) => m + 5)}>+5</button>
+          </div>
+          <div style={s.timeEditBtns}>
+            <button style={s.saveTimeBtn} onClick={() => onAdjustTime?.(session.id, localStudy)}>적용</button>
+            <button style={s.cancelTimeBtn} onClick={() => { setLocalStudy(selfStudy); onToggleTimeEdit?.(); }}>취소</button>
+          </div>
+        </div>
+      )}
+
+      {/* 타 학년 종료 시각 참조 */}
+      {!isEditingTime && crossGradeEndTimes && crossGradeEndTimes.length > 0 && endTime && (
+        <div style={s.crossGradeWrap}>
+          <div style={s.crossGradeRow}>
+            <span>타학년:</span>
+            {crossGradeEndTimes.map(({ grade, endTime: otherEnd }) => {
+              const dl = diffLabel(otherEnd);
+              return (
+                <span key={grade}>
+                  {grade}학→{otherEnd}{" "}
+                  {dl && <span style={dl.style}>{dl.text}</span>}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

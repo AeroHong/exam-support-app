@@ -98,8 +98,8 @@ const s = {
   thRight:     { padding: "0.5rem 0.75rem", fontWeight: 700, color: "#374151", textAlign: "right", borderBottom: "2px solid #e5e7eb" },
   tr:          { borderBottom: "1px solid #f3f4f6" },
   trHover:     { backgroundColor: "#f9fafb" },
-  td:          { padding: "0.4rem 0.75rem", color: "#111827", verticalAlign: "middle" },
-  tdMuted:     { padding: "0.4rem 0.75rem", color: "#9ca3af", fontSize: "0.82rem", verticalAlign: "middle" },
+  td:          { padding: "0.4rem 0.75rem", color: "#111827", verticalAlign: "middle", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  tdMuted:     { padding: "0.4rem 0.75rem", color: "#9ca3af", fontSize: "0.82rem", verticalAlign: "middle", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   tdRight:     { padding: "0.4rem 0.75rem", textAlign: "right", verticalAlign: "middle", whiteSpace: "nowrap" },
 
   editBtn:     { padding: "0.2rem 0.55rem", backgroundColor: "#fff", color: "#4f46e5", border: "1px solid #c7d2fe", borderRadius: "5px", cursor: "pointer", fontSize: "0.75rem", marginRight: "0.3rem" },
@@ -683,7 +683,17 @@ export default function StudentRosterTab({ schoolId, subjects = [], onDataChange
       </div>
 
       {/* ── 학생 테이블 ── */}
-      <table style={s.table}>
+      <table style={{ ...s.table, tableLayout: "fixed" }}>
+        <colgroup>
+          <col style={{ width: "52px" }} />   {/* 학년 */}
+          <col style={{ width: "48px" }} />   {/* 반 */}
+          <col style={{ width: "52px" }} />   {/* 번호 */}
+          <col style={{ width: "88px" }} />   {/* 이름 */}
+          <col style={{ width: "88px" }} />   {/* 응시 형태 */}
+          <col style={{ width: "190px" }} />  {/* 이메일 */}
+          <col />                              {/* 선택과목 - 나머지 */}
+          <col style={{ width: "100px" }} />  {/* 작업 */}
+        </colgroup>
         <thead style={s.thead}>
           <tr>
             <th style={s.th}>학년</th>
