@@ -170,7 +170,7 @@ function _detectLayout(headerRow) {
 }
 
 function _normCat(raw) {
-  const c = (raw || "").replace(/\n/g, " ").trim();
+  const c = (raw || "").replace(/[\r\n]/g, "").trim();
   if (c.includes("지정")) return "학교지정";
   if (c.includes("선택")) return "학생선택";
   return null;

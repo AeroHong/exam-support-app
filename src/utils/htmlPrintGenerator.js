@@ -338,3 +338,137 @@ export function generateStudentTimetablesHTML(studentTimetables, schoolName = ""
 
   return wrap(pages.join("\n")).replace("</style>", TIMETABLE_CSS + "</style>");
 }
+
+// ─── 시험시간표 ────────────────────────────────────────────────────────────────
+
+export function generateExamScheduleHTML(sortedRosters, planName = "", schoolName = "OO고등학교") {
+  // Group by dayLabel for rowspan
+  const dayGroups = [];
+  sortedRosters.forEach((r) => {
+    const last = dayGroups[dayGroups.length - 1];
+    if (last && last.dayLabel === r.dayLabel) {
+      last.rows.push(r);
+    } else {
+      dayGroups.push({ dayLabel: r.dayLabel, rows: [r] });
+    }
+  });
+
+  let tableRows = "";
+  dayGroups.forEach((dg) => {
+    dg.rows.forEach((r, i) => {
+      const rooms = r.roomGroups.map((rg) => rg.roomName).join(", ") || "-";
+      const dayCell = i === 0
+        ? `<td rowspan="${dg.rows.length}" style="background:#f3f4f6;font-weight:bold;vertical-align:middle">${r.dayLabel}</td>`
+        : "";
+      tableRows += `<tr>
+        ${dayCell}
+        <td>${r.periodLabel}</td>
+        <td style="white-space:nowrap">${r.startTime || "-"}~${r.endTime || "-"}</td>
+        <td>${r.grade}학년</td>
+        <td style="text-align:left">${r.subjectName}</td>
+        <td>${r.subjectCode || "-"}</td>
+        <td>${r.isEssay ? "서논술" : "선택"}</td>
+        <td style="text-align:left;font-size:8pt">${rooms}</td>
+        <td>${r.counts.total}</td>
+      </tr>`;
+    });
+  });
+
+  const body = `<div class="page">
+  <div class="title">${schoolName}${planName ? " " + planName : ""} 시험시간표</div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:12%">날짜</th>
+        <th style="width:8%">교시</th>
+        <th style="width:11%">시험시간</th>
+        <th style="width:7%">학년</th>
+        <th style="width:17%">과목명</th>
+        <th style="width:9%">과목코드</th>
+        <th style="width:7%">구분</th>
+        <th style="width:20%">고사실</th>
+        <th style="width:9%">응시인원</th>
+      </tr>
+    </thead>
+    <tbody>${tableRows}</tbody>
+  </table>
+</div>`;
+
+  return wrap(body);
+}
+
+// ─── 학급별 인원수·고사실 현황 ─────────────────────────────────────────────────
+
+export function generateClassCountHTML(sortedRosters, students, planName = "", schoolName = "OO고등학교") {
+  const classesByGrade = {};
+  students.forEach((s) => {
+    const g = String(s.grade);
+    if (!classesByGrade[g]) classesByGrade[g] = new Set();
+    classesByGrade[g].add(Number(s.classNo));
+  });
+
+  const grades = Object.keys(classesByGrade).sort();
+  const LANDSCAPE_CSS = `
+    .landscape { padding: 10mm 12mm; }
+    @media print { .landscape { size: A4 landscape; } }
+  `;
+
+  const pages = grades.map((grade) => {
+    const classes = [...classesByGrade[grade]].sort((a, b) => a - b);
+    const gradeRosters = sortedRosters.filter((r) => String(r.grade) === grade);
+    if (!gradeRosters.length) return "";
+
+    const colHeaders = classes.map((c) => `<th>${c}반</th>`).join("");
+
+    const rows = gradeRosters.map((r) => {
+      const countByClass = {};
+      classes.forEach((c) => { countByClass[c] = 0; });
+      r.students.forEach((st) => {
+        if (st.examStatus !== "delegation") {
+          const c = Number(st.classNo);
+          if (countByClass[c] !== undefined) countByClass[c]++;
+        }
+      });
+
+      const classCells = classes.map((c) => `<td>${countByClass[c] || ""}</td>`).join("");
+      const rooms = r.roomGroups.map((rg) => rg.roomName).join(", ") || "-";
+      const delegation = r.counts.delegation;
+      const special = r.counts.special + r.counts.separate;
+      const attended = r.counts.total - delegation;
+
+      return `<tr>
+        <td style="white-space:nowrap">${r.dayLabel}</td>
+        <td>${r.periodLabel}</td>
+        <td style="white-space:nowrap;font-size:8pt">${r.startTime || "-"}~${r.endTime || "-"}</td>
+        <td style="text-align:left">${r.subjectName}</td>
+        ${classCells}
+        <td style="font-weight:bold">${attended}</td>
+        <td class="dim">${delegation || ""}</td>
+        <td>${special || ""}</td>
+        <td style="text-align:left;font-size:8pt">${rooms}</td>
+      </tr>`;
+    }).join("");
+
+    return `<div class="page landscape">
+  <div class="title">${schoolName}${planName ? " " + planName : ""} ${grade}학년 학급별 응시인원 현황</div>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:10%">날짜</th>
+        <th style="width:6%">교시</th>
+        <th style="width:9%">시험시간</th>
+        <th style="width:13%">과목명</th>
+        ${colHeaders}
+        <th>응시합계</th>
+        <th>위탁</th>
+        <th>특수</th>
+        <th>고사실</th>
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+  </table>
+</div>`;
+  }).filter(Boolean);
+
+  return wrap(pages.join("\n")).replace("</style>", LANDSCAPE_CSS + "</style>");
+}

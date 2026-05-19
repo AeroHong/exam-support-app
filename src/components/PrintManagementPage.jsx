@@ -6,6 +6,8 @@ import {
   generateClassRostersExcel,
   generateWaitingRostersExcel,
   generateStudentTimetablesExcel,
+  generateExamScheduleExcel,
+  generateClassCountExcel,
   sessionFileName,
   downloadExcel,
 } from "../utils/excelGenerator";
@@ -15,6 +17,8 @@ import {
   generateClassRostersHTML,
   generateWaitingRostersHTML,
   generateStudentTimetablesHTML,
+  generateExamScheduleHTML,
+  generateClassCountHTML,
   openPrintWindow,
 } from "../utils/htmlPrintGenerator";
 import {
@@ -407,6 +411,87 @@ export default function PrintManagementPage({ plan, tenantData, schoolName = "OO
     }
   }
 
+  // ── 시험시간표 ────────────────────────────────────────────────────────────
+
+  function buildSortedRosters() {
+    const allRosters = getAllRosters();
+    const dayOrder = Object.fromEntries(plan?.days?.map((d, i) => [d.id, i]) ?? []);
+    const periodOrder = Object.fromEntries(plan?.periods?.map((p, i) => [p.id, i]) ?? []);
+    return [...allRosters].sort((a, b) => {
+      const sA = plan?.sessions?.find((s) => s.id === a.sessionId);
+      const sB = plan?.sessions?.find((s) => s.id === b.sessionId);
+      const dd = (dayOrder[sA?.dayId] ?? 999) - (dayOrder[sB?.dayId] ?? 999);
+      if (dd !== 0) return dd;
+      const pd = (periodOrder[sA?.periodId] ?? 999) - (periodOrder[sB?.periodId] ?? 999);
+      if (pd !== 0) return pd;
+      return Number(a.grade) - Number(b.grade);
+    });
+  }
+
+  function handleExamScheduleExcel() {
+    if (!plan?.sessions?.length) { showNotice("error", "배치된 세션이 없습니다."); return; }
+    setGenerating(true); setNotice(null);
+    try {
+      const sorted = buildSortedRosters();
+      if (!sorted.length) { showNotice("error", "배치된 세션이 없습니다."); return; }
+      const wb = generateExamScheduleExcel(sorted, plan?.name || "", schoolName);
+      downloadExcel(wb, `시험시간표_${today()}.xlsx`);
+      showNotice("success", `시험시간표 (${sorted.length}개 세션)를 생성했습니다.`);
+    } catch (err) {
+      console.error(err);
+      showNotice("error", "Excel 생성 중 오류: " + err.message);
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  function handleExamSchedulePrint() {
+    if (!plan?.sessions?.length) { showNotice("error", "배치된 세션이 없습니다."); return; }
+    setNotice(null);
+    try {
+      const sorted = buildSortedRosters();
+      if (!sorted.length) { showNotice("error", "배치된 세션이 없습니다."); return; }
+      openPrintWindow(generateExamScheduleHTML(sorted, plan?.name || "", schoolName));
+    } catch (err) {
+      console.error(err);
+      showNotice("error", "인쇄 페이지 생성 중 오류: " + err.message);
+    }
+  }
+
+  // ── 학급별 인원수·고사실 현황 ─────────────────────────────────────────────
+
+  function handleClassCountExcel() {
+    if (!students.length) { showNotice("error", "학생 데이터가 없습니다."); return; }
+    if (!plan?.sessions?.length) { showNotice("error", "배치된 세션이 없습니다."); return; }
+    setGenerating(true); setNotice(null);
+    try {
+      const sorted = buildSortedRosters();
+      if (!sorted.length) { showNotice("error", "배치된 세션이 없습니다."); return; }
+      const wb = generateClassCountExcel(sorted, students, plan?.name || "", schoolName);
+      downloadExcel(wb, `학급별_응시인원현황_${today()}.xlsx`);
+      showNotice("success", "학급별 응시인원 현황을 생성했습니다.");
+    } catch (err) {
+      console.error(err);
+      showNotice("error", "Excel 생성 중 오류: " + err.message);
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  function handleClassCountPrint() {
+    if (!students.length) { showNotice("error", "학생 데이터가 없습니다."); return; }
+    if (!plan?.sessions?.length) { showNotice("error", "배치된 세션이 없습니다."); return; }
+    setNotice(null);
+    try {
+      const sorted = buildSortedRosters();
+      if (!sorted.length) { showNotice("error", "배치된 세션이 없습니다."); return; }
+      openPrintWindow(generateClassCountHTML(sorted, students, plan?.name || "", schoolName));
+    } catch (err) {
+      console.error(err);
+      showNotice("error", "인쇄 페이지 생성 중 오류: " + err.message);
+    }
+  }
+
   // ── 선택 생성 모달 확인 ────────────────────────────────────────────────────
 
   function handleFilteredGenerate() {
@@ -593,6 +678,42 @@ export default function PrintManagementPage({ plan, tenantData, schoolName = "OO
           </button>
         </div>
         <p style={s.hintText}>💡 인쇄 시 A4 portrait 4매(2×2) 배치로 출력됩니다.</p>
+      </div>
+
+      {/* 6. 시험시간표 */}
+      <div style={s.section}>
+        <h3 style={s.sectionTitle}>📅 시험시간표</h3>
+        <p style={s.sectionDesc}>
+          전 학년 시험 일정을 날짜·교시·학년 순으로 정리한 통합 시험시간표입니다.
+          과목명·과목코드·서논술 구분·고사실·응시인원을 포함합니다.
+        </p>
+        <div style={s.btnRow}>
+          <button style={canGenerate ? s.primaryBtn : s.disabledBtn} onClick={handleExamScheduleExcel} disabled={!canGenerate}>
+            {generating ? "생성 중..." : "📊 Excel 생성"}
+          </button>
+          <button style={canGenerate ? s.outlineBtn : s.disabledBtn} onClick={handleExamSchedulePrint} disabled={!canGenerate}>
+            🖨️ 인쇄
+          </button>
+        </div>
+        <p style={s.hintText}>💡 일정 배치가 완료된 세션만 포함됩니다. 과목코드는 추후 입력 후 생성하세요.</p>
+      </div>
+
+      {/* 7. 학급별 인원수·고사실 현황 */}
+      <div style={s.section}>
+        <h3 style={s.sectionTitle}>👥 학급별 인원수·고사실 현황</h3>
+        <p style={s.sectionDesc}>
+          학년별로 각 시험 세션의 학급별 응시인원, 위탁·특수 인원, 배정 고사실을 정리한 현황표입니다.
+          Excel은 학년별 시트로, 인쇄는 학년별 페이지(가로)로 생성됩니다.
+        </p>
+        <div style={s.btnRow}>
+          <button style={canBasic && canGenerate ? s.primaryBtn : s.disabledBtn} onClick={handleClassCountExcel} disabled={!canBasic || !canGenerate}>
+            {generating ? "생성 중..." : "📊 Excel 생성"}
+          </button>
+          <button style={canBasic && canGenerate ? s.outlineBtn : s.disabledBtn} onClick={handleClassCountPrint} disabled={!canBasic || !canGenerate}>
+            🖨️ 인쇄
+          </button>
+        </div>
+        <p style={s.hintText}>💡 위탁·특수 학생 정보는 고사실 배정 데이터 기반입니다.</p>
       </div>
 
       {/* 선택 생성 모달 */}

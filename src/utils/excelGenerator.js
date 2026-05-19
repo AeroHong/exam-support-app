@@ -720,6 +720,182 @@ export function generateStudentTimetablesExcel(studentTimetables, schoolName = "
   return wb;
 }
 
+// ─── 시험시간표 (전 학년 통합) ────────────────────────────────────────────────
+
+export function generateExamScheduleExcel(sortedRosters, planName = "", schoolName = "OO고등학교") {
+  const wb = XLSX.utils.book_new();
+
+  const hStyle = {
+    font: { bold: true, sz: 10 },
+    fill: GRAY_FILL,
+    alignment: { horizontal: "center", vertical: "center", wrapText: true },
+    border: THIN_BORDER,
+  };
+  const cStyle = { font: { sz: 10 }, alignment: { horizontal: "center", vertical: "center" }, border: THIN_BORDER };
+  const lStyle = { font: { sz: 10 }, alignment: { horizontal: "left", vertical: "center" }, border: THIN_BORDER };
+  const titleStyle = { font: { bold: true, sz: 13 }, alignment: { horizontal: "center", vertical: "center" } };
+  const dayStyle = {
+    font: { bold: true, sz: 10 },
+    fill: { patternType: "solid", fgColor: { rgb: "F3F4F6" } },
+    alignment: { horizontal: "center", vertical: "center" },
+    border: THIN_BORDER,
+  };
+
+  const rows = [];
+  const titleText = `${schoolName}${planName ? " " + planName : ""} 시험시간표`;
+  rows.push([{ v: titleText, t: "s", s: titleStyle }, "", "", "", "", "", "", "", ""]);
+  rows.push(["", "", "", "", "", "", "", "", ""]);
+  rows.push([
+    { v: "날짜", t: "s", s: hStyle },
+    { v: "교시", t: "s", s: hStyle },
+    { v: "시험시간", t: "s", s: hStyle },
+    { v: "학년", t: "s", s: hStyle },
+    { v: "과목명", t: "s", s: hStyle },
+    { v: "과목코드", t: "s", s: hStyle },
+    { v: "구분", t: "s", s: hStyle },
+    { v: "고사실", t: "s", s: hStyle },
+    { v: "응시인원", t: "s", s: hStyle },
+  ]);
+
+  const dayGroups = [];
+  sortedRosters.forEach((r) => {
+    const last = dayGroups[dayGroups.length - 1];
+    if (last && last.dayLabel === r.dayLabel) {
+      last.rows.push(r);
+    } else {
+      dayGroups.push({ dayLabel: r.dayLabel, rows: [r] });
+    }
+  });
+
+  const merges = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 8 } }];
+  let rowIdx = 3;
+
+  dayGroups.forEach((dg) => {
+    const dayStartRow = rowIdx;
+    dg.rows.forEach((r, i) => {
+      const rooms = r.roomGroups.map((rg) => rg.roomName).join(", ") || "-";
+      rows.push([
+        { v: i === 0 ? r.dayLabel : "", t: "s", s: dayStyle },
+        { v: r.periodLabel, t: "s", s: cStyle },
+        { v: `${r.startTime || "-"}~${r.endTime || "-"}`, t: "s", s: cStyle },
+        { v: `${r.grade}학년`, t: "s", s: cStyle },
+        { v: r.subjectName, t: "s", s: lStyle },
+        { v: r.subjectCode || "", t: "s", s: cStyle },
+        { v: r.isEssay ? "서논술" : "선택", t: "s", s: cStyle },
+        { v: rooms, t: "s", s: lStyle },
+        { v: r.counts.total, t: "n", s: cStyle },
+      ]);
+      rowIdx++;
+    });
+    if (dg.rows.length > 1) {
+      merges.push({ s: { r: dayStartRow, c: 0 }, e: { r: rowIdx - 1, c: 0 } });
+    }
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  ws["!cols"] = [
+    { wch: 13 }, { wch: 8 }, { wch: 14 }, { wch: 8 },
+    { wch: 20 }, { wch: 12 }, { wch: 8 }, { wch: 24 }, { wch: 9 },
+  ];
+  ws["!rows"] = [{ hpx: 24 }];
+  ws["!merges"] = merges;
+
+  XLSX.utils.book_append_sheet(wb, ws, "시험시간표");
+  return wb;
+}
+
+// ─── 학급별 인원수·고사실 현황 ────────────────────────────────────────────────
+
+export function generateClassCountExcel(sortedRosters, students, planName = "", schoolName = "OO고등학교") {
+  const wb = XLSX.utils.book_new();
+
+  const classesByGrade = {};
+  students.forEach((s) => {
+    const g = String(s.grade);
+    if (!classesByGrade[g]) classesByGrade[g] = new Set();
+    classesByGrade[g].add(Number(s.classNo));
+  });
+
+  const hStyle = {
+    font: { bold: true, sz: 10 },
+    fill: GRAY_FILL,
+    alignment: { horizontal: "center", vertical: "center" },
+    border: THIN_BORDER,
+  };
+  const cStyle = { font: { sz: 10 }, alignment: { horizontal: "center", vertical: "center" }, border: THIN_BORDER };
+  const lStyle = { font: { sz: 10 }, alignment: { horizontal: "left", vertical: "center" }, border: THIN_BORDER };
+  const boldCStyle = { font: { bold: true, sz: 10 }, alignment: { horizontal: "center", vertical: "center" }, border: THIN_BORDER };
+  const titleStyle = { font: { bold: true, sz: 12 }, alignment: { horizontal: "center", vertical: "center" } };
+
+  const grades = Object.keys(classesByGrade).sort();
+
+  grades.forEach((grade) => {
+    const classes = [...classesByGrade[grade]].sort((a, b) => a - b);
+    const gradeRosters = sortedRosters.filter((r) => String(r.grade) === grade);
+    if (!gradeRosters.length) return;
+
+    const totalCols = 4 + classes.length + 4;
+    const emptyRow = Array(totalCols).fill("");
+
+    const rows = [];
+    const titleText = `${schoolName}${planName ? " " + planName : ""} ${grade}학년 학급별 응시인원 현황`;
+    rows.push([{ v: titleText, t: "s", s: titleStyle }, ...Array(totalCols - 1).fill("")]);
+    rows.push([...emptyRow]);
+    rows.push([
+      { v: "날짜", t: "s", s: hStyle },
+      { v: "교시", t: "s", s: hStyle },
+      { v: "시험시간", t: "s", s: hStyle },
+      { v: "과목명", t: "s", s: hStyle },
+      ...classes.map((c) => ({ v: `${c}반`, t: "s", s: hStyle })),
+      { v: "응시합계", t: "s", s: hStyle },
+      { v: "위탁", t: "s", s: hStyle },
+      { v: "특수", t: "s", s: hStyle },
+      { v: "고사실", t: "s", s: hStyle },
+    ]);
+
+    gradeRosters.forEach((r) => {
+      const countByClass = {};
+      classes.forEach((c) => { countByClass[c] = 0; });
+      r.students.forEach((st) => {
+        if (st.examStatus !== "delegation") {
+          const c = Number(st.classNo);
+          if (countByClass[c] !== undefined) countByClass[c]++;
+        }
+      });
+
+      const rooms = r.roomGroups.map((rg) => rg.roomName).join(", ") || "-";
+      const delegation = r.counts.delegation;
+      const special = r.counts.special + r.counts.separate;
+      const attended = r.counts.total - delegation;
+
+      rows.push([
+        { v: r.dayLabel, t: "s", s: cStyle },
+        { v: r.periodLabel, t: "s", s: cStyle },
+        { v: `${r.startTime || "-"}~${r.endTime || "-"}`, t: "s", s: cStyle },
+        { v: r.subjectName, t: "s", s: lStyle },
+        ...classes.map((c) => ({ v: countByClass[c] || 0, t: "n", s: cStyle })),
+        { v: attended, t: "n", s: boldCStyle },
+        { v: delegation || 0, t: "n", s: cStyle },
+        { v: special || 0, t: "n", s: cStyle },
+        { v: rooms, t: "s", s: lStyle },
+      ]);
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: totalCols - 1 } }];
+    ws["!cols"] = [
+      { wch: 12 }, { wch: 8 }, { wch: 13 }, { wch: 18 },
+      ...classes.map(() => ({ wch: 6 })),
+      { wch: 10 }, { wch: 6 }, { wch: 6 }, { wch: 22 },
+    ];
+    ws["!rows"] = [{ hpx: 22 }];
+
+    XLSX.utils.book_append_sheet(wb, ws, uniqueSheetName(wb, `${grade}학년`));
+  });
+
+  return wb;
+}
+
 // ─── 다운로드 ─────────────────────────────────────────────────────────────────
 
 export function downloadExcel(workbook, fileName) {
