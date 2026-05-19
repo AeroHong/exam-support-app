@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { addMinutes } from "../utils/timeUtils";
+import { addMinutes, rangesOverlap } from "../utils/timeUtils";
 import {
   STRATEGIES,
   autoPlace,
@@ -156,11 +156,10 @@ const s = {
   timeEditBtns:   { display: "flex", gap: "0.25rem" },
   saveTimeBtn:    { flex: 1, padding: "0.22rem 0", backgroundColor: "#4f46e5", color: "#fff", border: "none", borderRadius: "5px", fontSize: "0.72rem", fontWeight: 600, cursor: "pointer" },
   cancelTimeBtn:  { flex: 1, padding: "0.22rem 0", backgroundColor: "#fff", color: "#6b7280", border: "1px solid #d1d5db", borderRadius: "5px", fontSize: "0.72rem", cursor: "pointer" },
-  // 타 학년 종료 시간 참조
-  crossGradeWrap: { borderTop: "1px dashed #e5e7eb", marginTop: "0.2rem", paddingTop: "0.2rem" },
-  crossGradeRow:  { fontSize: "0.6rem", color: "#6b7280", display: "flex", gap: "0.35rem", flexWrap: "wrap" },
-  crossGradeEarly: { color: "#0891b2", fontWeight: 600 }, // 타 학년이 더 일찍 끝남 (▲)
-  crossGradeLate:  { color: "#dc2626", fontWeight: 600 }, // 타 학년이 더 늦게 끝남 (▼ → 자습 필요)
+  // 타 학년 시간 겹침 경고
+  crossGradeWrap:    { borderTop: "1px dashed #fed7aa", marginTop: "0.2rem", paddingTop: "0.2rem" },
+  crossGradeRow:     { fontSize: "0.6rem", color: "#9a3412", display: "flex", gap: "0.35rem", flexWrap: "wrap", alignItems: "center" },
+  crossGradeOverlap: { color: "#ea580c", fontWeight: 700 },
 
   // 학생 명단 모달
   modalOverlay: { position: "fixed", inset: 0, backgroundColor: "rgba(0,0,0,0.35)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" },
@@ -202,18 +201,17 @@ function calcEndTime(session) {
   return addMinutes(addMinutes(base, selfStudy), session.duration ?? 50);
 }
 
-// 같은 슬롯의 타 학년 세션 종료 시각 목록
-function getCrossGradeEndTimes(allSessions, dayId, periodId, currentGrade) {
-  const byGrade = {};
+// 같은 날 타 학년 배치된 세션들의 시간 정보 (겹침 판단은 SessionCard 내부에서)
+function getSameDayOtherGradeSessions(allSessions, dayId, currentGrade) {
+  const result = [];
   for (const s of allSessions) {
-    if (s.dayId !== dayId || s.periodId !== periodId || String(s.grade) === String(currentGrade) || !s.startTime) continue;
-    const g = String(s.grade);
-    const end = calcEndTime(s);
-    if (!byGrade[g] || end > byGrade[g]) byGrade[g] = end; // 학년당 가장 늦은 종료
+    if (s.dayId !== dayId || String(s.grade) === String(currentGrade) || !s.startTime) continue;
+    const selfStudy = s.selfStudyMinutes || 0;
+    const examStart = selfStudy > 0 ? addMinutes(s.startTime, selfStudy) : s.startTime;
+    const duration  = s.duration ?? 50;
+    result.push({ grade: String(s.grade), examStart, duration, endTime: addMinutes(examStart, duration) });
   }
-  return Object.entries(byGrade)
-    .sort(([a], [b]) => Number(a) - Number(b))
-    .map(([grade, endTime]) => ({ grade, endTime }));
+  return result;
 }
 
 // ── 메인 컴포넌트 ─────────────────────────────────────────────────────────────
@@ -588,7 +586,7 @@ export default function ScheduleBoardPage({
                   const dStats       = dayStatsMap[day.id];
                   const pStat        = dStats?.periodStats?.[period.id];
                   const conflictsInSlot = dStats?.conflicts ?? new Set();
-                  const crossGrades  = getCrossGradeEndTimes(sessions, day.id, period.id, gradeFilter);
+                  const crossGrades  = getSameDayOtherGradeSessions(sessions, day.id, gradeFilter);
                   const confirmed    = scheduleConfirmed?.[gradeFilter] ?? false;
 
                   return (
@@ -845,15 +843,20 @@ function SessionCard({
   const previewExamStart = baseStart && localStudy > 0 ? addMinutes(baseStart, localStudy) : baseStart;
   const previewEnd       = previewExamStart ? addMinutes(previewExamStart, session.duration ?? 50) : "";
 
-  // 타 학년과의 종료 시각 차이
-  function diffLabel(otherEnd) {
-    if (!endTime || !otherEnd) return null;
-    const { toMinutes } = { toMinutes: (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; } };
-    const diff = toMinutes(endTime) - toMinutes(otherEnd);
-    if (diff === 0) return { text: "동일", style: { fontSize: "0.6rem", color: "#059669", fontWeight: 600 } };
-    if (diff > 0) return { text: `▲${diff}분`, style: s.crossGradeEarly }; // 내가 더 늦게 끝남
-    return { text: `▼${Math.abs(diff)}분`, style: s.crossGradeLate };      // 타 학년이 더 늦게 끝남 → 자습 필요
-  }
+  // 현재 세션과 1분이라도 겹치는 타학년 세션만 학년별로 집계 (같은 날 다른 교시 포함)
+  const overlappingGrades = (() => {
+    if (!examStart || !crossGradeEndTimes?.length) return [];
+    const myDuration = session.duration ?? 50;
+    const byGrade = {};
+    for (const other of crossGradeEndTimes) {
+      if (!rangesOverlap(examStart, myDuration, other.examStart, other.duration)) continue;
+      const g = other.grade;
+      if (!byGrade[g] || other.endTime > byGrade[g]) byGrade[g] = other.endTime;
+    }
+    return Object.entries(byGrade)
+      .sort(([a], [b]) => Number(a) - Number(b))
+      .map(([grade, otherEnd]) => ({ grade, otherEnd }));
+  })();
 
   return (
     <div
@@ -916,20 +919,14 @@ function SessionCard({
         </div>
       )}
 
-      {/* 타 학년 종료 시각 참조 */}
-      {!isEditingTime && crossGradeEndTimes && crossGradeEndTimes.length > 0 && endTime && (
+      {/* 타 학년 시간 겹침 경고 */}
+      {!isEditingTime && overlappingGrades.length > 0 && (
         <div style={s.crossGradeWrap}>
           <div style={s.crossGradeRow}>
-            <span>타학년:</span>
-            {crossGradeEndTimes.map(({ grade, endTime: otherEnd }) => {
-              const dl = diffLabel(otherEnd);
-              return (
-                <span key={grade}>
-                  {grade}학→{otherEnd}{" "}
-                  {dl && <span style={dl.style}>{dl.text}</span>}
-                </span>
-              );
-            })}
+            <span style={s.crossGradeOverlap}>⚠ 겹침:</span>
+            {overlappingGrades.map(({ grade, otherEnd }) => (
+              <span key={grade}>{grade}학년 ~{otherEnd}</span>
+            ))}
           </div>
         </div>
       )}
