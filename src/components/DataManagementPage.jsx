@@ -51,7 +51,7 @@ export default function DataManagementPage({ schoolId, students = [], subjects =
 
       {activeTab === "students" && <StudentRosterTab schoolId={schoolId} subjects={subjects} onDataChanged={onDataChanged} onReloadStudents={onReloadStudents} readOnly={readOnly} />}
       {activeTab === "rooms"    && <RoomsTab    schoolId={schoolId} students={students} readOnly={readOnly} />}
-      {activeTab === "subjects" && <SubjectsTab schoolId={schoolId} readOnly={readOnly} />}
+      {activeTab === "subjects" && <SubjectsTab schoolId={schoolId} onDataChanged={onDataChanged} readOnly={readOnly} />}
     </div>
   );
 }

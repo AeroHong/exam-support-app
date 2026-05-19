@@ -199,7 +199,7 @@ function App() {
     }
   }, [tenantData.loadedAt, tenantData.students, tenantData.enrollments, plan.sessions.length, planner]);
 
-  // 수강생 데이터 변동 처리: cascade reload + studentCount 재계산 + 확정 해제
+  // 수강생·과목 데이터 변동 처리: cascade reload + studentCount 재계산 + 확정 해제
   const handleDataChanged = async ({ grade, delta, type }) => {
     const newData = await tenantData.reload();
     if (!newData) return;
@@ -207,24 +207,35 @@ function App() {
     const { students: ns, enrollments: ne } = newData;
     const affectedGrades = grade === "all" ? ["1", "2", "3"] : [String(grade)];
 
-    planner.setPlan((cur) => {
-      const sessions = cur.sessions.map((session) => {
-        if (!affectedGrades.includes(String(session.grade))) return session;
-        if (type === "statusSpecial") return session;
-        return { ...session, studentCount: recalcSessionStudentCount(session, ns, ne) };
+    if (type === "subject") {
+      // 과목 변동: 시험계획 확정부터 모든 하위 확정 cascade 해제 후 즉시 저장
+      planner.setPlanAndSave((cur) => {
+        const ec = { ...(cur.examPlanConfirmed ?? {}) };
+        const sc = { ...(cur.scheduleConfirmed ?? {}) };
+        const rc = { ...(cur.roomConfirmed ?? {}) };
+        affectedGrades.forEach((g) => { ec[g] = false; sc[g] = false; rc[g] = false; });
+        return { ...cur, examPlanConfirmed: ec, scheduleConfirmed: sc, roomConfirmed: rc, waitingConfirmed: {} };
       });
+    } else {
+      planner.setPlan((cur) => {
+        const sessions = cur.sessions.map((session) => {
+          if (!affectedGrades.includes(String(session.grade))) return session;
+          if (type === "statusSpecial") return session;
+          return { ...session, studentCount: recalcSessionStudentCount(session, ns, ne) };
+        });
 
-      const sc = { ...(cur.scheduleConfirmed ?? {}) };
-      const rc = { ...(cur.roomConfirmed ?? {}) };
-      // 위탁 변경: 응시 인원 변동 → 일정·고사실 확정 모두 해제
-      // 특수/별도 변경: 물리 좌석 배치만 달라짐 → 고사실 확정만 해제
-      if (type !== "statusSpecial") {
-        affectedGrades.forEach((g) => { sc[g] = false; });
-      }
-      affectedGrades.forEach((g) => { rc[g] = false; });
+        const sc = { ...(cur.scheduleConfirmed ?? {}) };
+        const rc = { ...(cur.roomConfirmed ?? {}) };
+        // 위탁 변경: 응시 인원 변동 → 일정·고사실 확정 모두 해제
+        // 특수/별도 변경: 물리 좌석 배치만 달라짐 → 고사실 확정만 해제
+        if (type !== "statusSpecial") {
+          affectedGrades.forEach((g) => { sc[g] = false; });
+        }
+        affectedGrades.forEach((g) => { rc[g] = false; });
 
-      return { ...cur, sessions, scheduleConfirmed: sc, roomConfirmed: rc };
-    });
+        return { ...cur, sessions, scheduleConfirmed: sc, roomConfirmed: rc };
+      });
+    }
 
     setDataChangeLog({ grade, delta, type, affectedGrades, timestamp: Date.now() });
 

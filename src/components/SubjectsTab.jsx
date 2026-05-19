@@ -954,7 +954,7 @@ const GRADE_TABS = [
   { key: 3, label: "3학년" },
 ];
 
-export default function SubjectsTab({ schoolId, readOnly = false }) {
+export default function SubjectsTab({ schoolId, onDataChanged, readOnly = false }) {
   const [subjects, setSubjects] = useState([]);
   const [loading, setLoading] = useState(false);
   const [gradeFilter, setGradeFilter] = useState("all");
@@ -998,6 +998,7 @@ export default function SubjectsTab({ schoolId, readOnly = false }) {
   async function handleSaveSubject(data) {
     await saveSubject(schoolId, data);
     await fetchSubjects();
+    onDataChanged?.({ grade: String(data.grade), delta: 1, type: "subject" });
   }
 
   async function handleDelete(subject) {
@@ -1005,6 +1006,7 @@ export default function SubjectsTab({ schoolId, readOnly = false }) {
     try {
       await deleteSubject(schoolId, subject.id);
       setSubjects(prev => prev.filter(s => s.id !== subject.id));
+      onDataChanged?.({ grade: String(subject.grade), delta: -1, type: "subject" });
     } catch (err) {
       setNotice({ type: "err", msg: "삭제 실패: " + err.message });
     }
@@ -1026,6 +1028,7 @@ export default function SubjectsTab({ schoolId, readOnly = false }) {
         setSubjects(prev => prev.filter(s => s.grade !== gradeFilter));
       }
       setNotice({ type: "ok", msg: `${label} 과목 ${filtered.length}개가 삭제되었습니다.` });
+      onDataChanged?.({ grade: gradeFilter === "all" ? "all" : String(gradeFilter), delta: -filtered.length, type: "subject" });
     } catch (err) {
       setNotice({ type: "err", msg: "삭제 실패: " + err.message });
     } finally {
@@ -1247,6 +1250,7 @@ export default function SubjectsTab({ schoolId, readOnly = false }) {
             setImportOpen(false);
             setNotice({ type: "ok", msg: `${year}년 입학 과목 ${count}개 저장 완료` });
             fetchSubjects();
+            onDataChanged?.({ grade: "all", delta: count, type: "subject" });
           }}
         />
       )}
