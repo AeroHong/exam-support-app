@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import AppFooter from "./AppFooter";
 import { serverTimestamp, doc, setDoc } from "firebase/firestore";
 import { EXAM_TYPES, getDefaultPlan } from "../data/defaults";
 import { firebaseDb } from "../lib/firebase";
@@ -214,6 +215,8 @@ export default function ExamDashboard({ schoolId, ownerId, schoolName, userName,
           onClose={() => setCreateOpen(false)}
         />
       )}
+
+      <AppFooter />
     </div>
   );
 }

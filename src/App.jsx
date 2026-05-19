@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import AppFooter from "./components/AppFooter";
 import DashboardPanel from "./components/DashboardPanel";
 import DataManagementPage from "./components/DataManagementPage";
 import ExamDashboard from "./components/ExamDashboard";
@@ -243,19 +244,21 @@ function App() {
   }, [plan.sessions]);
 
   const handleConfirmSchedule = (grade) => {
-    planner.setPlan((cur) => ({ ...cur, scheduleConfirmed: { ...(cur.scheduleConfirmed ?? {}), [grade]: true } }));
+    planner.setPlanAndSave((cur) => ({ ...cur, scheduleConfirmed: { ...(cur.scheduleConfirmed ?? {}), [grade]: true } }));
   };
   const handleDeconfirmSchedule = (grade) => {
-    planner.setPlan((cur) => ({ ...cur, scheduleConfirmed: { ...(cur.scheduleConfirmed ?? {}), [grade]: false } }));
+    planner.setPlanAndSave((cur) => ({ ...cur, scheduleConfirmed: { ...(cur.scheduleConfirmed ?? {}), [grade]: false } }));
   };
-  const handleConfirmExamPlan = (grade) => {
-    planner.setPlan((cur) => ({
+  // planPatch가 전달되면 세션 갱신 + 확정을 단일 원자적 저장으로 처리
+  const handleConfirmExamPlan = (grade, planPatch) => {
+    planner.setPlanAndSave((cur) => ({
       ...cur,
+      ...(planPatch ?? {}),
       examPlanConfirmed: { ...(cur.examPlanConfirmed ?? {}), [grade]: true },
     }));
   };
   const handleDeconfirmExamPlan = (grade) => {
-    planner.setPlan((cur) => ({
+    planner.setPlanAndSave((cur) => ({
       ...cur,
       examPlanConfirmed: { ...(cur.examPlanConfirmed ?? {}), [grade]: false },
       scheduleConfirmed: { ...(cur.scheduleConfirmed ?? {}), [grade]: false },
@@ -265,10 +268,10 @@ function App() {
   };
 
   const handleConfirmRoom = (grade) => {
-    planner.setPlan((cur) => ({ ...cur, roomConfirmed: { ...(cur.roomConfirmed ?? {}), [grade]: true } }));
+    planner.setPlanAndSave((cur) => ({ ...cur, roomConfirmed: { ...(cur.roomConfirmed ?? {}), [grade]: true } }));
   };
   const handleDeconfirmRoom = (grade) => {
-    planner.setPlan((cur) => ({ ...cur, roomConfirmed: { ...(cur.roomConfirmed ?? {}), [grade]: false } }));
+    planner.setPlanAndSave((cur) => ({ ...cur, roomConfirmed: { ...(cur.roomConfirmed ?? {}), [grade]: false } }));
   };
 
   const handleUpdateWaitingAssignments = (periodKey, assignments) => {
@@ -278,10 +281,10 @@ function App() {
     }));
   };
   const handleConfirmWaiting = (periodKey) => {
-    planner.setPlan((cur) => ({ ...cur, waitingConfirmed: { ...(cur.waitingConfirmed ?? {}), [periodKey]: true } }));
+    planner.setPlanAndSave((cur) => ({ ...cur, waitingConfirmed: { ...(cur.waitingConfirmed ?? {}), [periodKey]: true } }));
   };
   const handleDeconfirmWaiting = (periodKey) => {
-    planner.setPlan((cur) => ({ ...cur, waitingConfirmed: { ...(cur.waitingConfirmed ?? {}), [periodKey]: false } }));
+    planner.setPlanAndSave((cur) => ({ ...cur, waitingConfirmed: { ...(cur.waitingConfirmed ?? {}), [periodKey]: false } }));
   };
 
   // 학년 배치 초기화 → 해당 학년 모든 확정 cascade 해제
@@ -566,6 +569,8 @@ function App() {
           />
         ) : null}
       </main>
+
+      <AppFooter />
 
       <StudentListModal
         open={Boolean(selectedMetric)}

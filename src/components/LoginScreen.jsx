@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { fetchSchoolIndex } from "../lib/firestoreSchool";
+import AppFooter from "./AppFooter";
 
 const FEATURES = [
   {
@@ -142,14 +143,6 @@ const s = {
   pointDot: { marginTop: 7, flexShrink: 0, width: 4, height: 4, borderRadius: "50%" },
   pointText: { fontSize: "0.81rem", color: "#4b5563", lineHeight: 1.6, margin: 0 },
 
-  // ── Footer ───────────────────────────────────────────────────────────
-  footer: {
-    marginTop: "auto", padding: "1.25rem 2rem",
-    display: "flex", alignItems: "center", justifyContent: "center",
-    gap: "0.4rem", borderTop: "1px solid #f1f5f9",
-  },
-  footerText: { fontSize: "0.72rem", color: "#94a3b8" },
-  footerLink: { fontSize: "0.72rem", fontWeight: 700, color: "#6366f1", textDecoration: "none" },
 
   // ── 학교 설정 화면 공통 ──────────────────────────────────────────────
   setupBox: {
@@ -411,18 +404,7 @@ export default function LoginScreen({ status, error, onSignIn, onJoinSchool, onC
         </div>
       </section>
 
-      {/* 푸터 */}
-      <footer style={s.footer}>
-        <span style={s.footerText}>Designed &amp; Built by</span>
-        <a
-          href="https://github.com/AeroHong"
-          target="_blank"
-          rel="noopener noreferrer"
-          style={s.footerLink}
-        >
-          @AeroHong
-        </a>
-      </footer>
+      <AppFooter />
 
     </div>
   );

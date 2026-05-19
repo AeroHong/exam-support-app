@@ -633,8 +633,10 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
 
     // 다른 학년 세션은 그대로 유지
     const otherSessions = plan.sessions.filter((s) => String(s.grade) !== gradeFilter);
-    onPlanChange({ name: planName, semester, days, periods, sessions: [...otherSessions, ...currentGradeSessions] });
-    if (onConfirmExamPlan) onConfirmExamPlan(gradeFilter);
+    const patch = { name: planName, semester, days, periods, sessions: [...otherSessions, ...currentGradeSessions] };
+    // 세션 갱신 + 확정을 단일 원자적 저장으로 — 분리 호출 시 새로고침에서 확정 풀림
+    if (onConfirmExamPlan) onConfirmExamPlan(gradeFilter, patch);
+    else onPlanChange(patch);
   };
 
   // ── 파생값 ──

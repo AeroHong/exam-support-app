@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import AppFooter from "./AppFooter";
 import {
   collection,
   getDocs,
@@ -249,6 +250,7 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
 
   // ─── 렌더 ─────────────────────────────────────────────────────────────────
   return (
+    <>
     <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
       {/* 헤더 */}
       <div className="dense-page-header mb-6">
@@ -650,6 +652,8 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
         </div>
       )}
     </main>
+    <AppFooter />
+    </>
   );
 }
 

@@ -111,11 +111,12 @@ export function usePlannerData({ schoolId, ownerId, planId, enabled }) {
 
   // replacePlan — 상태 갱신 + 2초 디바운스 자동저장
   const replacePlan = (nextPlan) => {
-    setState((current) => {
-      const value = typeof nextPlan === "function" ? nextPlan(current.plan) : nextPlan;
-      planRef.current = value;
-      return { ...current, plan: value, saveStatus: "idle" };
-    });
+    // planRef를 setState 콜백 밖에서 즉시 갱신해야
+    // 같은 이벤트에서 setPlanAndSave가 호출될 때 최신 plan을 읽을 수 있음
+    const value = typeof nextPlan === "function" ? nextPlan(planRef.current) : nextPlan;
+    planRef.current = value;
+
+    setState((current) => ({ ...current, plan: value, saveStatus: "idle" }));
 
     dirtyRef.current = true;
     clearTimeout(autoSaveTimerRef.current);
@@ -125,6 +126,16 @@ export function usePlannerData({ schoolId, ownerId, planId, enabled }) {
         persistPlanRef.current(planRef.current);
       }
     }, 2000);
+  };
+
+  // setPlanAndSave — 상태 갱신 + 즉시 저장 (확정·해제 등 중요 상태 변경용)
+  const setPlanAndSave = (nextPlan) => {
+    const value = typeof nextPlan === "function" ? nextPlan(planRef.current) : nextPlan;
+    clearTimeout(autoSaveTimerRef.current);
+    planRef.current = value;
+    dirtyRef.current = false;
+    setState((current) => ({ ...current, plan: value, saveStatus: "idle" }));
+    persistPlanRef.current(value);
   };
 
   const reload = async () => {
@@ -188,6 +199,7 @@ export function usePlannerData({ schoolId, ownerId, planId, enabled }) {
   return {
     ...state,
     setPlan: replacePlan,
+    setPlanAndSave,
     savePlan: persistPlan,
     createVersion,
     resetPlan,
