@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useTableSort } from "../hooks/useTableSort";
 import * as XLSX from "xlsx";
 import {
   bulkSaveEnrollmentsByGrade,
@@ -322,6 +323,7 @@ export default function StudentRosterTab({ schoolId, subjects = [], onDataChange
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [gradeFilter, setGradeFilter] = useState("all");
+  const { toggle: sortToggle, sortData, Ind, thSort } = useTableSort();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
@@ -534,6 +536,13 @@ export default function StudentRosterTab({ schoolId, subjects = [], onDataChange
     3: students.filter(s => s.grade === 3).length,
   };
   const filtered = gradeFilter === "all" ? students : students.filter(s => s.grade === gradeFilter);
+  const displayStudents = sortData(filtered, {
+    grade:       (s) => Number(s.grade),
+    classNo:     (s) => Number(s.classNo),
+    number:      (s) => Number(s.number),
+    name:        (s) => s.name,
+    examStatus:  (s) => s.examStatus || "",
+  });
 
   return (
     <div style={s.page}>
@@ -696,11 +705,11 @@ export default function StudentRosterTab({ schoolId, subjects = [], onDataChange
         </colgroup>
         <thead style={s.thead}>
           <tr>
-            <th style={s.th}>학년</th>
-            <th style={s.th}>반</th>
-            <th style={s.th}>번호</th>
-            <th style={s.th}>이름</th>
-            <th style={s.th}>응시 형태</th>
+            <th style={{ ...s.th, ...thSort }} onClick={() => sortToggle("grade")}>학년{Ind("grade")}</th>
+            <th style={{ ...s.th, ...thSort }} onClick={() => sortToggle("classNo")}>반{Ind("classNo")}</th>
+            <th style={{ ...s.th, ...thSort }} onClick={() => sortToggle("number")}>번호{Ind("number")}</th>
+            <th style={{ ...s.th, ...thSort }} onClick={() => sortToggle("name")}>이름{Ind("name")}</th>
+            <th style={{ ...s.th, ...thSort }} onClick={() => sortToggle("examStatus")}>응시 형태{Ind("examStatus")}</th>
             <th style={s.th}>이메일</th>
             <th style={s.th}>선택과목</th>
             <th style={s.thRight}>
@@ -719,7 +728,7 @@ export default function StudentRosterTab({ schoolId, subjects = [], onDataChange
             <tr><td colSpan={8} style={s.emptyRow}>
               {students.length === 0 ? "등록된 학생이 없습니다. 파일 업로드 또는 학생 추가를 이용하세요." : "해당 학년 학생이 없습니다."}
             </td></tr>
-          ) : filtered.map(student => (
+          ) : displayStudents.map(student => (
             <tr key={student.id} style={s.tr}
               onMouseEnter={e => e.currentTarget.style.backgroundColor = "#f9fafb"}
               onMouseLeave={e => e.currentTarget.style.backgroundColor = ""}>

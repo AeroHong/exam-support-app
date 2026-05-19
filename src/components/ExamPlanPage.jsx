@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import { DEFAULT_PERIODS } from "../data/defaults";
+import { useTableSort } from "../hooks/useTableSort";
 
 // ─── 스타일 ──────────────────────────────────────────────────────────────────
 
@@ -448,6 +449,7 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
   const [examOverrides, setExamOverrides] = useState({});
   const [gradeFilter, setGradeFilter] = useState("1");
   const [settingsOpen, setSettingsOpen] = useState(true);
+  const { toggle: sortToggle, sortData, Ind, thSort } = useTableSort();
   const [modalSubject, setModalSubject] = useState(null);
   const [isReloading, setIsReloading] = useState(false);
   const [enrollmentDiff, setEnrollmentDiff] = useState(null);
@@ -679,8 +681,17 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
     .filter((s) => examConfig[s.id]?.hasExam)
     .reduce((sum, subject) => sum + calcAutoCount(subject, students, enrollments, semester), 0);
 
+  const displaySubjects = sortData(filteredSubjects, {
+    name:     (s) => s.name || "",
+    category: (s) => s.category || "",
+    credits:  (s) => Number(s.credits) || 0,
+    students: (s) => examConfig[s.id]?.studentCountOverride
+      ?? calcAutoCount(s, students, enrollments, semester),
+    duration: (s) => Number(examConfig[s.id]?.duration) || 0,
+  });
+
   const renderRows = () =>
-    filteredSubjects.map((subject) => (
+    displaySubjects.map((subject) => (
       <SubjectRow
         key={subject.id}
         subject={subject}
@@ -947,10 +958,10 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
           <table style={{ ...s.table, minWidth: "860px" }}>
             <thead style={s.thead}>
               <tr>
-                <th style={s.th}>과목명</th>
-                <th style={s.th}>구분</th>
-                <th style={s.thCenter}>이수단위</th>
-                <th style={s.thCenter}>수강생</th>
+                <th style={{ ...s.th, ...thSort }} onClick={() => sortToggle("name")}>과목명{Ind("name")}</th>
+                <th style={{ ...s.th, ...thSort }} onClick={() => sortToggle("category")}>구분{Ind("category")}</th>
+                <th style={{ ...s.thCenter, ...thSort }} onClick={() => sortToggle("credits")}>이수단위{Ind("credits")}</th>
+                <th style={{ ...s.thCenter, ...thSort }} onClick={() => sortToggle("students")}>수강생{Ind("students")}</th>
                 <th style={s.thCenter}>
                   <label style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "0.3rem", cursor: "pointer" }}>
                     <input
@@ -975,7 +986,7 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
                     응시
                   </label>
                 </th>
-                <th style={s.thCenter}>시험시간(분)</th>
+                <th style={{ ...s.thCenter, ...thSort }} onClick={() => sortToggle("duration")}>시험시간(분){Ind("duration")}</th>
                 <th style={s.thCenter}>서논술</th>
               </tr>
             </thead>

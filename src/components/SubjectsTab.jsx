@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTableSort } from "../hooks/useTableSort";
 import * as XLSX from "xlsx";
 import {
   bulkSaveSubjectsByYear,
@@ -960,6 +961,7 @@ export default function SubjectsTab({ schoolId, onDataChanged, readOnly = false 
   const [gradeFilter, setGradeFilter] = useState("all");
   const [catFilter, setCatFilter] = useState("전체");
   const [sgFilter, setSgFilter] = useState("전체");
+  const { toggle: sortToggle, sortData, Ind, thSort } = useTableSort();
   const [modalOpen, setModalOpen] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
@@ -1075,12 +1077,23 @@ export default function SubjectsTab({ schoolId, onDataChanged, readOnly = false 
 
   // 필터 목록
   const allSg = ["전체", ...new Set(subjects.map(s => s.subjectGroup).filter(Boolean))];
-  const filtered = subjects.filter(s => {
-    if (gradeFilter !== "all" && s.grade !== gradeFilter) return false;
-    if (catFilter !== "전체" && s.category !== catFilter) return false;
-    if (sgFilter !== "전체" && s.subjectGroup !== sgFilter) return false;
-    return true;
-  });
+  const filtered = sortData(
+    subjects.filter(s => {
+      if (gradeFilter !== "all" && s.grade !== gradeFilter) return false;
+      if (catFilter !== "전체" && s.category !== catFilter) return false;
+      if (sgFilter !== "전체" && s.subjectGroup !== sgFilter) return false;
+      return true;
+    }),
+    {
+      category:     (s) => s.category || "",
+      subjectGroup: (s) => s.subjectGroup || "",
+      courseType:   (s) => s.courseType || "",
+      name:         (s) => s.name || "",
+      subjectCode:  (s) => s.subjectCode || "",
+      credits:      (s) => Number(s.credits) || 0,
+      entryYear:    (s) => s.entryYear || "",
+    }
+  );
   const countByGrade = {
     all: subjects.length,
     1: subjects.filter(s => s.grade === 1).length,
@@ -1170,14 +1183,14 @@ export default function SubjectsTab({ schoolId, onDataChanged, readOnly = false 
         </colgroup>
         <thead style={s.thead}>
           <tr>
-            <th style={s.th}>구분</th>
-            <th style={s.th}>교과군</th>
-            <th style={s.th}>과목구분</th>
-            <th style={s.th}>과목명</th>
-            <th style={s.th}>과목코드</th>
-            <th style={s.th}>학점</th>
+            <th style={{ ...s.th, ...thSort }} onClick={() => sortToggle("category")}>구분{Ind("category")}</th>
+            <th style={{ ...s.th, ...thSort }} onClick={() => sortToggle("subjectGroup")}>교과군{Ind("subjectGroup")}</th>
+            <th style={{ ...s.th, ...thSort }} onClick={() => sortToggle("courseType")}>과목구분{Ind("courseType")}</th>
+            <th style={{ ...s.th, ...thSort }} onClick={() => sortToggle("name")}>과목명{Ind("name")}</th>
+            <th style={{ ...s.th, ...thSort }} onClick={() => sortToggle("subjectCode")}>과목코드{Ind("subjectCode")}</th>
+            <th style={{ ...s.th, ...thSort }} onClick={() => sortToggle("credits")}>학점{Ind("credits")}</th>
             <th style={s.th}>개설정보</th>
-            <th style={s.th}>입학년도</th>
+            <th style={{ ...s.th, ...thSort }} onClick={() => sortToggle("entryYear")}>입학년도{Ind("entryYear")}</th>
             <th style={s.thRight}>
               {!readOnly && filtered.length > 0 ? (
                 <button style={s.dangerOutlineBtn} onClick={handleDeleteFiltered} disabled={loading}>

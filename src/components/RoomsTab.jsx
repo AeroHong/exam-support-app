@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { deleteRoom, loadRooms, saveRoom } from "../lib/firestoreData";
+import { useTableSort } from "../hooks/useTableSort";
 
 // ─── 스타일 ──────────────────────────────────────────────────────────────────
 
@@ -349,18 +350,24 @@ export default function RoomsTab({ schoolId, students = [], readOnly = false }) 
 // ─── 테이블 컴포넌트 ──────────────────────────────────────────────────────────
 
 function RoomTable({ rooms, onEdit, onDelete, onPatch, readOnly = false }) {
+  const { toggle: sortToggle, sortData, Ind, thSort } = useTableSort();
+  const display = sortData(rooms, {
+    name:     (r) => r.name || "",
+    floor:    (r) => Number(r.floor) || 0,
+    capacity: (r) => Number(r.capacity) || 0,
+  });
   return (
     <table style={s.table}>
       <thead style={s.thead}>
         <tr>
-          <th style={s.th}>고사실명</th>
-          <th style={s.thCenter}>층</th>
-          <th style={s.thCenter}>최대 인원</th>
+          <th style={{ ...s.th, ...thSort }} onClick={() => sortToggle("name")}>고사실명{Ind("name")}</th>
+          <th style={{ ...s.thCenter, ...thSort }} onClick={() => sortToggle("floor")}>층{Ind("floor")}</th>
+          <th style={{ ...s.thCenter, ...thSort }} onClick={() => sortToggle("capacity")}>최대 인원{Ind("capacity")}</th>
           <th style={{ ...s.thRight, width: "60px" }}></th>
         </tr>
       </thead>
       <tbody>
-        {rooms.map((room) => (
+        {display.map((room) => (
           <tr key={room.id} style={s.tr}>
             <td style={s.td}>{room.name}</td>
             <EditableNumberCell

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTableSort } from "../hooks/useTableSort";
 import AppFooter from "./AppFooter";
 import {
   collection,
@@ -27,6 +28,9 @@ const EMPTY_EMAIL = { email: "", schoolId: "", schoolName: "" };
 
 function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
   const [activeTab, setActiveTab] = useState("schools");
+  const schoolSort  = useTableSort();
+  const domainSort  = useTableSort();
+  const emailSort   = useTableSort();
 
   // ─── 학교 관리 상태 ──────────────────────────────────────────────────────
   const [schools, setSchools] = useState([]);
@@ -317,16 +321,22 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
                 <table className="input-table">
                   <thead>
                     <tr>
-                      <th>학교 ID</th>
-                      <th>학교명</th>
-                      <th>구분</th>
-                      <th>소유자 이메일</th>
-                      <th>등록일</th>
+                      {[["id","학교 ID"],["name","학교명"],["isGuest","구분"],["ownerEmail","소유자 이메일"],["createdAt","등록일"]].map(([key, label]) => (
+                        <th key={key} style={schoolSort.thSort} onClick={() => schoolSort.toggle(key)}>
+                          {label}{schoolSort.Ind(key)}
+                        </th>
+                      ))}
                       <th></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {schools.map((school) => (
+                    {schoolSort.sortData(schools, {
+                      id:         (s) => s.id || "",
+                      name:       (s) => s.name || "",
+                      isGuest:    (s) => s.isGuest ? "Guest" : "정식",
+                      ownerEmail: (s) => s.ownerEmail || "",
+                      createdAt:  (s) => s.createdAt?.toDate?.()?.getTime() ?? 0,
+                    }).map((school) => (
                       <tr key={school.id}>
                         <td className="font-mono text-xs">{school.id}</td>
                         <td>{school.name}</td>
@@ -443,14 +453,20 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
                 <table className="input-table">
                   <thead>
                     <tr>
-                      <th>도메인</th>
-                      <th>학교 ID</th>
-                      <th>학교명</th>
+                      {[["id","도메인"],["schoolId","학교 ID"],["schoolName","학교명"]].map(([key, label]) => (
+                        <th key={key} style={domainSort.thSort} onClick={() => domainSort.toggle(key)}>
+                          {label}{domainSort.Ind(key)}
+                        </th>
+                      ))}
                       <th></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {domains.map((d) => (
+                    {domainSort.sortData(domains, {
+                      id:         (d) => d.id || "",
+                      schoolId:   (d) => d.schoolId || "",
+                      schoolName: (d) => d.schoolName || "",
+                    }).map((d) => (
                       <tr key={d.id}>
                         <td className="font-mono text-xs">{d.id}</td>
                         <td className="text-sm text-slate-600">{d.schoolId}</td>
@@ -562,14 +578,20 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
                 <table className="input-table">
                   <thead>
                     <tr>
-                      <th>이메일 키</th>
-                      <th>학교 ID</th>
-                      <th>학교명</th>
+                      {[["id","이메일 키"],["schoolId","학교 ID"],["schoolName","학교명"]].map(([key, label]) => (
+                        <th key={key} style={emailSort.thSort} onClick={() => emailSort.toggle(key)}>
+                          {label}{emailSort.Ind(key)}
+                        </th>
+                      ))}
                       <th></th>
                     </tr>
                   </thead>
                   <tbody>
-                    {emailMaps.map((em) => (
+                    {emailSort.sortData(emailMaps, {
+                      id:         (e) => e.id || "",
+                      schoolId:   (e) => e.schoolId || "",
+                      schoolName: (e) => e.schoolName || "",
+                    }).map((em) => (
                       <tr key={em.id}>
                         <td className="font-mono text-xs">{em.id}</td>
                         <td className="text-sm text-slate-600">{em.schoolId}</td>
