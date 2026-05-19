@@ -598,7 +598,16 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
 
   // ── 기본 설정(고사명·학기·날짜·교시)만 저장 ──
   const handleSaveSettings = () => {
-    onPlanChange({ name: planName, semester, days, periods, sessions: plan.sessions ?? [] });
+    // 교시 시간 변경 시 이미 배치된 세션의 startTime을 새 교시 시간으로 갱신
+    const periodsById = Object.fromEntries(periods.map((p) => [p.id, p]));
+    const updatedSessions = (plan.sessions ?? []).map((session) => {
+      if (!session.periodId) return session;
+      const period = periodsById[session.periodId];
+      if (!period) return session;
+      const startTime = period.startTimes?.[session.grade] ?? session.startTime;
+      return { ...session, startTime };
+    });
+    onPlanChange({ name: planName, semester, days, periods, sessions: updatedSessions });
   };
 
   // ── 현재 학년 세션 확정 ──
@@ -620,7 +629,11 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
           grade:       String(subject.grade),
           dayId:       existing?.dayId ?? "",
           periodId:    existing?.periodId ?? "",
-          startTime:   existing?.startTime ?? "",
+          startTime:   (() => {
+            if (!existing?.periodId) return "";
+            const period = periods.find((p) => p.id === existing.periodId);
+            return period?.startTimes?.[String(subject.grade)] ?? existing?.startTime ?? "";
+          })(),
           duration:    cfg.duration ?? 50,
           dateLabel:   existing?.dateLabel ?? "미배치",
           roomIds:     existing?.roomIds ?? [],
