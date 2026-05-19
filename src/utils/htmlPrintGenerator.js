@@ -184,11 +184,11 @@ export function generateSubjectRostersHTML(subjectRosters) {
 const ASSIGN_STATUS = { special: "도움실", separate: "별도실", delegation: "위탁" };
 
 function assignCell(asgn) {
-  if (!asgn) return "<td>대기</td><td></td>";
+  if (!asgn) return "<td>대기</td>";
   const status = ASSIGN_STATUS[asgn.examStatus];
-  if (status) return `<td class="dim">${status}</td><td class="dim"></td>`;
-  if (!asgn.roomName) return "<td>-</td><td>-</td>";
-  return `<td>${asgn.roomName}</td><td>${asgn.seatNumber !== "" ? asgn.seatNumber : "-"}</td>`;
+  if (status) return `<td class="dim">${status}</td>`;
+  if (!asgn.roomName) return "<td>-</td>";
+  return `<td>${asgn.roomName}</td>`;
 }
 
 function classPage(cls) {
@@ -196,9 +196,9 @@ function classPage(cls) {
   if (!sessions.length) return "";
 
   const sessionHeaders = sessions
-    .map((sess) => `<th colspan="2" style="font-size:7.5pt">${sess.dayLabel} ${sess.periodLabel}<br>${sess.subjectName}</th>`)
+    .map((sess) => `<th style="font-size:7.5pt">${sess.dayLabel} ${sess.periodLabel}<br>${sess.subjectName}</th>`)
     .join("");
-  const subHeaders = sessions.map(() => `<th style="width:auto">고사실</th><th style="width:auto">좌석</th>`).join("");
+  const subHeaders = sessions.map(() => `<th style="width:auto">고사실</th>`).join("");
 
   const dataRows = students.map((st) => {
     const cells = sessions.map((sess) => assignCell(st.assignments.get(sess.sessionId))).join("");

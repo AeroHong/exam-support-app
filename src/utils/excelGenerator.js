@@ -411,7 +411,7 @@ export function generateClassRostersExcel(classRosters, schoolName = "OO고등�
     if (!sessions.length && !students.length) return;
 
     const rows = [];
-    const colCount = 3 + sessions.length * 2;
+    const colCount = 3 + sessions.length;
 
     // 행1: 제목
     const titleRow = [
@@ -428,11 +428,10 @@ export function generateClassRostersExcel(classRosters, schoolName = "OO고등�
     ];
     sessions.forEach((sess) => {
       sessionHeaderRow.push({ v: `${sess.dayLabel} ${sess.periodLabel}\n${sess.subjectName}`, t: "s", s: sHeader });
-      sessionHeaderRow.push({ v: "", t: "s", s: sHeader });
     });
     rows.push(sessionHeaderRow);
 
-    // 행3: 서브 헤더
+    // 행3: 서브 헤더 (고사실만)
     const subHeaderRow = [
       { v: "", t: "s", s: sHeader },
       { v: "", t: "s", s: sHeader },
@@ -440,7 +439,6 @@ export function generateClassRostersExcel(classRosters, schoolName = "OO고등�
     ];
     sessions.forEach(() => {
       subHeaderRow.push({ v: "고사실", t: "s", s: sHeader });
-      subHeaderRow.push({ v: "좌석", t: "s", s: sHeader });
     });
     rows.push(subHeaderRow);
 
@@ -455,15 +453,12 @@ export function generateClassRostersExcel(classRosters, schoolName = "OO고등�
         const asgn = st.assignments.get(sess.sessionId);
         if (!asgn) {
           row.push({ v: "대기", t: "s", s: { ...sCell, font: { sz: 9, color: { rgb: "9CA3AF" } } } });
-          row.push({ v: "", t: "s", s: sCell });
         } else {
           const status = ASSIGN_STATUS[asgn.examStatus];
           if (status) {
             row.push({ v: status, t: "s", s: { ...sCell, font: { sz: 9, color: { rgb: "9CA3AF" } } } });
-            row.push({ v: "", t: "s", s: sCell });
           } else {
             row.push({ v: asgn.roomName || "-", t: "s", s: sCell });
-            row.push({ v: asgn.seatNumber !== "" ? String(asgn.seatNumber) : "-", t: "s", s: sCell });
           }
         }
       });
@@ -472,22 +467,18 @@ export function generateClassRostersExcel(classRosters, schoolName = "OO고등�
 
     const ws = XLSX.utils.aoa_to_sheet(rows);
 
-    // 병합: 제목 행 + 세션 헤더(colspan 2) + 서브 헤더 rowspan 용
+    // 병합: 제목 행 + 번호·이름·성별 rowspan
     const merges = [
       { s: { r: 0, c: 0 }, e: { r: 0, c: colCount - 1 } }, // 제목
       { s: { r: 1, c: 0 }, e: { r: 2, c: 0 } }, // 번호 rowspan
       { s: { r: 1, c: 1 }, e: { r: 2, c: 1 } }, // 이름 rowspan
       { s: { r: 1, c: 2 }, e: { r: 2, c: 2 } }, // 성별 rowspan
     ];
-    sessions.forEach((_, i) => {
-      const c = 3 + i * 2;
-      merges.push({ s: { r: 1, c }, e: { r: 1, c: c + 1 } }); // 세션 헤더 colspan 2
-    });
     ws["!merges"] = merges;
 
     // 열 너비
     const cols = [{ wch: 6 }, { wch: 12 }, { wch: 6 }];
-    sessions.forEach(() => { cols.push({ wch: 10 }); cols.push({ wch: 6 }); });
+    sessions.forEach(() => { cols.push({ wch: 14 }); });
     ws["!cols"] = cols;
     ws["!rows"] = [{ hpx: 20 }, { hpx: 28 }, { hpx: 16 }];
 
