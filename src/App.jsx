@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import AppFooter from "./components/AppFooter";
-import DashboardPanel from "./components/DashboardPanel";
 import DataManagementPage from "./components/DataManagementPage";
 import ExamDashboard from "./components/ExamDashboard";
 import ExamPlanPage from "./components/ExamPlanPage";
@@ -9,12 +8,10 @@ import PrintManagementPage from "./components/PrintManagementPage";
 import RoomAssignmentPage from "./components/RoomAssignmentPage";
 import ScheduleBoardPage from "./components/ScheduleBoardPage";
 import WaitingRoomAssignmentPage from "./components/WaitingRoomAssignmentPage";
-import StudentListModal from "./components/StudentListModal";
 import SuperAdminPage from "./components/SuperAdminPage";
 import VersionBrowserModal from "./components/VersionBrowserModal";
 import { useAuth } from "./hooks/useAuth";
 import { usePlannerData } from "./hooks/usePlannerData";
-import { useScheduleEngine } from "./hooks/useScheduleEngine";
 import { useTenantData } from "./hooks/useTenantData";
 import { validateConfirmationChain } from "./utils/confirmationChain";
 import { recalcSessionStudentCount } from "./utils/sessionStudentCount";
@@ -26,7 +23,6 @@ const PAGES = [
   { key: "waiting",  label: "대기실 배정" },
   { key: "rooms",    label: "고사실 배정" },
   { key: "print",    label: "출력물 관리" },
-  { key: "overview", label: "개요" },
 ];
 
 const s = {
@@ -62,7 +58,6 @@ function App() {
   const [demoSchoolMode, setDemoSchoolMode] = useState(false); // super admin이 demo school UI에 진입한 상태
   const [selectedPlanId, setSelectedPlanId] = useState(null);
   const [activePage, setActivePage] = useState("data");
-  const [selectedMetric, setSelectedMetric] = useState(null);
   const [draftStudents, setDraftStudents] = useState([]);
   const [draftEnrollments, setDraftEnrollments] = useState([]);
   const [versionModalOpen, setVersionModalOpen] = useState(false);
@@ -89,13 +84,6 @@ function App() {
   const baseSubjects = tenantData.subjects;
   const effectiveStudents = draftStudents.length > 0 ? draftStudents : baseStudents;
   const effectiveEnrollments = draftEnrollments.length > 0 ? draftEnrollments : baseEnrollments;
-
-  const engine = useScheduleEngine({
-    sessions: plan.sessions,
-    students: effectiveStudents,
-    enrollments: effectiveEnrollments,
-    rooms: baseRooms,
-  });
 
   const sessionsById = useMemo(
     () => Object.fromEntries(plan.sessions.map((session) => [session.id, session])),
@@ -330,10 +318,6 @@ function App() {
       } : {}),
     }));
   };
-
-  const selectedStudents = selectedMetric
-    ? engine.metricStudentDetails[selectedMetric] ?? []
-    : [];
 
   // 초기 로딩 / 로그인 처리 중 → 화면 번쩍임 방지
   if (auth.status === "loading" || auth.status === "resolving") {
@@ -572,29 +556,9 @@ function App() {
           />
         ) : null}
 
-        {activePage === "overview" ? (
-          <DashboardPanel
-            summary={engine.summary}
-            roomWarnings={engine.roomWarnings}
-            onMetricSelect={setSelectedMetric}
-          />
-        ) : null}
       </main>
 
       <AppFooter />
-
-      <StudentListModal
-        open={Boolean(selectedMetric)}
-        titleMap={{
-          waitingStudents: "대기 학생",
-          noExamStudents: "무시험 학생",
-          tripleStudents: "3연속 시험 학생",
-          conflictingStudents: "충돌 학생",
-        }}
-        metricKey={selectedMetric}
-        students={selectedStudents}
-        onClose={() => setSelectedMetric(null)}
-      />
 
       {versionModalOpen && (
         <VersionBrowserModal
