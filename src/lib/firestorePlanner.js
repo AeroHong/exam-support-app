@@ -148,10 +148,14 @@ export async function loadPlanList({ schoolId }) {
       examType: d.data().examType ?? "",
       status: d.data().status ?? "draft",
       semester: d.data().semester ?? null,
-      sessionCount: 0, // 메타만 조회 — 세션 수는 별도 로드 필요 시 추가
+      sessionCount: 0,
       updatedAt: d.data().updatedAt ?? null,
       createdAt: d.data().createdAt ?? null,
       ownerId: d.data().ownerId ?? "",
+      days: d.data().days ?? [],
+      examPlanConfirmed: d.data().examPlanConfirmed ?? {},
+      scheduleConfirmed: d.data().scheduleConfirmed ?? {},
+      roomConfirmed: d.data().roomConfirmed ?? {},
     }))
     .sort((a, b) => {
       const aTime = a.updatedAt?.seconds ?? 0;
