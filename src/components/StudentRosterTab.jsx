@@ -8,7 +8,9 @@ import {
   deleteStudentsByGrade,
   loadStudents,
   saveStudent,
+  upsertStudentsFromSection,
 } from "../lib/firestoreData";
+import { parseSectionWorkbook } from "../utils/sectionParser";
 
 // ─── 과목명 fuzzy 매칭 ────────────────────────────────────────────────────────
 
@@ -331,6 +333,7 @@ export default function StudentRosterTab({ schoolId, subjects = [], onDataChange
   const [previewRows, setPreviewRows] = useState(null);
   const [parseError, setParseError] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [parsedSectionData, setParsedSectionData] = useState(null);
 
   // ── 과목명 매칭 검증 ──────────────────────────────────────────────────────
   const subjectMatchResult = useMemo(() => {
@@ -389,10 +392,21 @@ export default function StudentRosterTab({ schoolId, subjects = [], onDataChange
   }
 
   // ── 파일 파싱 ──
+  function detectSectionFormatFromWb(wb) {
+    for (const sheetName of wb.SheetNames) {
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, defval: "" });
+      if (!rows.length) continue;
+      const r0 = rows[0];
+      if (rows.length >= 3 && String(r0[5] ?? "").includes("학기")) return true;
+      if (String(r0[0] ?? "").trim() === "학년" && String(r0[4] ?? "").trim() === "성별") return true;
+    }
+    return false;
+  }
+
   function handleFileChange(e) {
     const file = e.target.files?.[0];
     if (!file) return;
-    setParseError(""); setParsedStudents([]); setPreviewRows(null);
+    setParseError(""); setParsedStudents([]); setPreviewRows(null); setParsedSectionData(null);
     const isCsv = file.name.toLowerCase().endsWith(".csv");
     const reader = new FileReader();
     reader.onload = (ev) => {
@@ -400,6 +414,14 @@ export default function StudentRosterTab({ schoolId, subjects = [], onDataChange
         const wb = isCsv
           ? XLSX.read(ev.target.result, { type: "string" })
           : XLSX.read(new Uint8Array(ev.target.result), { type: "array" });
+
+        // 분반 데이터 형식 감지 → 분반+학생 일괄 저장 경로
+        if (detectSectionFormatFromWb(wb)) {
+          const sectionData = parseSectionWorkbook(wb);
+          setParsedSectionData(sectionData);
+          return;
+        }
+
         let allRows = [];
         for (const sheetName of wb.SheetNames) {
           const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1 });
@@ -461,6 +483,46 @@ export default function StudentRosterTab({ schoolId, subjects = [], onDataChange
       onDataChanged?.({ grade: uploadedGradesStr.length === 1 ? uploadedGradesStr[0] : "all", delta: parsedStudents.length, type: "upload" });
     } catch (err) {
       setNotice({ type: "err", msg: "업로드 실패: " + err.message });
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleSectionUploadConfirm() {
+    if (!parsedSectionData || uploading) return;
+    setUploading(true);
+    try {
+      // enrollment에서 studentId → 과목명 목록 역산 → students에 electiveSubjects 추가
+      const enrollmentsByStudent = {};
+      for (const e of parsedSectionData.enrollments) {
+        if (!enrollmentsByStudent[e.studentId]) enrollmentsByStudent[e.studentId] = [];
+        enrollmentsByStudent[e.studentId].push(e.subjectName);
+      }
+      const studentsWithSubjects = parsedSectionData.students.map(st => ({
+        ...st,
+        electiveSubjects: enrollmentsByStudent[st.id] ?? [],
+      }));
+      await upsertStudentsFromSection(schoolId, studentsWithSubjects);
+
+      const gradeMap = {};
+      for (const e of parsedSectionData.enrollments) {
+        const g = Number(e.grade);
+        if (!gradeMap[g]) gradeMap[g] = [];
+        gradeMap[g].push(e);
+      }
+      for (const [grade, enrs] of Object.entries(gradeMap)) {
+        await bulkSaveEnrollmentsByGrade(schoolId, enrs, Number(grade));
+      }
+
+      const grades = Object.keys(gradeMap).sort().join(", ");
+      setNotice({ type: "ok", msg: `${parsedSectionData.students.length}명 저장 완료 (${grades}학년 분반 데이터 포함)` });
+      setParsedSectionData(null); setUploadOpen(false);
+      await fetchStudents();
+      for (const grade of Object.keys(gradeMap)) {
+        onDataChanged?.({ grade: Number(grade), delta: parsedSectionData.students.filter(s => String(s.grade) === String(grade)).length, type: "upload" });
+      }
+    } catch (err) {
+      setNotice({ type: "err", msg: "저장 실패: " + err.message });
     } finally {
       setUploading(false);
     }
@@ -554,7 +616,7 @@ export default function StudentRosterTab({ schoolId, subjects = [], onDataChange
         </div>
         {!readOnly && (
           <div style={s.btnRow}>
-            <button style={s.outlineBtn} onClick={() => { setUploadOpen(o => !o); setParseError(""); setPreviewRows(null); }}>
+            <button style={s.outlineBtn} onClick={() => { setUploadOpen(o => !o); setParseError(""); setPreviewRows(null); setParsedSectionData(null); setParsedStudents([]); }}>
               {uploadOpen ? "업로드 닫기 ✕" : "파일 업로드"}
             </button>
             <button style={s.primaryBtn} onClick={() => { setEditTarget(null); setModalOpen(true); }}>
@@ -577,9 +639,8 @@ export default function StudentRosterTab({ schoolId, subjects = [], onDataChange
         <div style={s.uploadBox}>
           <p style={s.uploadTitle}>Excel / CSV 업로드</p>
           <p style={s.uploadHint}>
-            1학년: 학년·반·번호·이름·성별·학번·이메일 &nbsp;|&nbsp;
-            2·3학년: 학년·반·번호·이름·이메일·선택과목…<br />
-            학급별 시트 자동 통합. 업로드 시 해당 학년 기존 데이터를 교체합니다.
+            <strong>일반 명렬 형식</strong>: 1학년 — 학년·반·번호·이름·성별·학번·이메일 / 2·3학년 — 학년·반·번호·이름·이메일·선택과목명…<br />
+            <strong>분반 데이터 형식</strong>: 학년·반·번호·이름·성별·(계정?)·과목명1·과목명2… (값: A~E 분반) — 학생+분반 일괄 저장
           </p>
           <div style={s.uploadBtnRow}>
             <button style={s.outlineBtn} onClick={() => fileInputRef.current?.click()}>파일 선택</button>
@@ -592,8 +653,60 @@ export default function StudentRosterTab({ schoolId, subjects = [], onDataChange
             {parsedStudents.length > 0 && (
               <button style={s.outlineBtn} onClick={() => { setParsedStudents([]); setPreviewRows(null); }}>취소</button>
             )}
+            {parsedSectionData && (
+              <button style={s.primaryBtn} onClick={handleSectionUploadConfirm} disabled={uploading}>
+                {uploading ? "저장 중…" : `학생+분반 저장 (${parsedSectionData.students.length}명)`}
+              </button>
+            )}
+            {parsedSectionData && (
+              <button style={s.outlineBtn} onClick={() => setParsedSectionData(null)}>취소</button>
+            )}
           </div>
           {parseError && <p style={{ ...s.notice, ...s.noticeErr, marginTop: "0.75rem" }}>{parseError}</p>}
+
+          {/* ── 분반 데이터 미리보기 ── */}
+          {parsedSectionData && (
+            <div style={s.previewWrap}>
+              <p style={s.previewLabel}>
+                분반 데이터 파싱 완료
+                <span style={{ marginLeft: "0.5rem", fontSize: "0.72rem", fontWeight: 700, padding: "0.05rem 0.4rem", borderRadius: "3px", backgroundColor: "#e0e7ff", color: "#3730a3" }}>
+                  {parsedSectionData.format === "samsung" ? "3행 헤더" : parsedSectionData.format === "generic" ? "1행 헤더" : "1행+3행 혼합"}
+                </span>
+                <span style={{ marginLeft: "0.75rem", color: "#374151" }}>학생 {parsedSectionData.students.length}명 · 분반 {parsedSectionData.enrollments.filter(e => e.section).length}건</span>
+              </p>
+              {Object.entries(parsedSectionData.sectionsByGrade).sort().map(([grade, subjects]) => (
+                <div key={grade} style={{ marginBottom: "0.75rem" }}>
+                  <p style={{ fontSize: "0.78rem", fontWeight: 700, color: "#374151", marginBottom: "0.35rem" }}>{grade}학년</p>
+                  <table style={{ ...s.table, fontSize: "0.78rem" }}>
+                    <thead style={s.thead}>
+                      <tr>
+                        <th style={s.th}>과목</th>
+                        {["A","B","C","D","E"].map(sec => <th key={sec} style={{ ...s.th, textAlign: "center" }}>{sec}</th>)}
+                        <th style={{ ...s.th, textAlign: "center" }}>합계</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(subjects).map(([subject, secCounts]) => {
+                        const total = Object.values(secCounts).reduce((a, b) => a + b, 0);
+                        return (
+                          <tr key={subject} style={s.tr}>
+                            <td style={s.td}>{subject}</td>
+                            {["A","B","C","D","E"].map(sec => (
+                              <td key={sec} style={{ ...s.td, textAlign: "center", color: secCounts[sec] ? "#111827" : "#e5e7eb" }}>
+                                {secCounts[sec] ?? "—"}
+                              </td>
+                            ))}
+                            <td style={{ ...s.td, textAlign: "center", fontWeight: 700 }}>{total}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+            </div>
+          )}
+
           {previewRows && (
             <div style={s.previewWrap}>
               <p style={s.previewLabel}>미리보기 (전체 {parsedStudents.length}명 중 최대 5행)</p>

@@ -264,7 +264,81 @@ export function autoAssignAllRooms(sessions, rooms, students, enrollments) {
   return result;
 }
 
+// ─── 분반별 고사실 자동 배정 (Mode 2) ────────────────────────────────────────
+
+/**
+ * 분반별로 고사실 자동 배정
+ * - 분반 A, B, C … 순서로 학급 교실 → 추가 고사실 순차 배정
+ * - 분반 간 방 중복 없음 (usedRoomIds 누적)
+ * @returns {{ [section: string]: string[] }} section → roomIds
+ */
+export function autoAssignSectionRooms(session, rooms, students, enrollments) {
+  const enrolledForSession = enrollments.filter((e) => {
+    if (String(e.grade) !== String(session.grade)) return false;
+    if (session.subjectId && e.subjectId) return e.subjectId === session.subjectId;
+    return e.subjectName === session.subjectName;
+  });
+
+  const sectionCounts = {};
+  for (const e of enrolledForSession) {
+    if (!e.section) continue;
+    sectionCounts[e.section] = (sectionCounts[e.section] ?? 0) + 1;
+  }
+
+  const gradeClassRooms = getGradeClassRooms(rooms, session.grade);
+  const extraRooms = getExtraRooms(rooms);
+  const allRooms = [...gradeClassRooms, ...extraRooms];
+  const usedRoomIds = new Set();
+  const result = {};
+
+  for (const section of Object.keys(sectionCounts).sort()) {
+    let remaining = sectionCounts[section];
+    if (remaining <= 0) continue;
+
+    const assignedRooms = [];
+    for (const room of allRooms) {
+      if (remaining <= 0) break;
+      if (usedRoomIds.has(room.id)) continue;
+      assignedRooms.push(room);
+      remaining -= room.capacity;
+    }
+
+    const roomIds = assignedRooms.map((r) => r.id);
+    result[section] = roomIds;
+    roomIds.forEach((id) => usedRoomIds.add(id));
+  }
+
+  return result;
+}
+
+/**
+ * 분반별 학생 수 반환
+ * @returns {{ [section: string]: number }}
+ */
+export function getSectionCounts(session, enrollments) {
+  const counts = {};
+  for (const e of enrollments) {
+    if (String(e.grade) !== String(session.grade)) continue;
+    const matches = session.subjectId && e.subjectId
+      ? e.subjectId === session.subjectId
+      : e.subjectName === session.subjectName;
+    if (!matches || !e.section) continue;
+    counts[e.section] = (counts[e.section] ?? 0) + 1;
+  }
+  return counts;
+}
+
 // ─── 고사실 충돌 검사 ─────────────────────────────────────────────────────
+
+/**
+ * 세션의 유효 roomIds 반환 (Mode 1: roomIds, Mode 2: sectionRoomAssignments의 모든 방)
+ */
+function getEffectiveRoomIds(session) {
+  if (session.sectionMode === "section" && session.sectionRoomAssignments) {
+    return [...new Set(Object.values(session.sectionRoomAssignments).flat())];
+  }
+  return session.roomIds ?? [];
+}
 
 /**
  * 같은 (dayId, periodId)에 같은 방이 여러 session에 배정된 경우를 반환
@@ -278,7 +352,7 @@ export function findRoomConflicts(sessions) {
     if (!session.dayId || !session.periodId) continue;
     const key = `${session.dayId}__${session.periodId}`;
     if (!periodMap[key]) periodMap[key] = {};
-    for (const roomId of session.roomIds ?? []) {
+    for (const roomId of getEffectiveRoomIds(session)) {
       if (!periodMap[key][roomId]) periodMap[key][roomId] = [];
       periodMap[key][roomId].push(session.id);
     }

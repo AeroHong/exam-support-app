@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { autoAssignAllRooms, findRoomConflicts } from "../utils/roomAssigner";
+import { autoAssignAllRooms, autoAssignSectionRooms, findRoomConflicts, getSectionCounts } from "../utils/roomAssigner";
 
 // ─── 스타일 ──────────────────────────────────────────────────────────────────
 
@@ -79,6 +79,15 @@ const s = {
   // 방 선택 드롭다운 패널
   roomPicker:   { marginTop: "0.5rem", border: "1px solid #e5e7eb", borderRadius: "7px", padding: "0.5rem 0.65rem", backgroundColor: "#fafafa", maxHeight: "160px", overflowY: "auto" },
   roomOption:   { display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.2rem 0", fontSize: "0.8rem", cursor: "pointer" },
+
+  // 분반 배정 모드
+  modeToggle:   { display: "inline-flex", borderRadius: "6px", border: "1px solid #e5e7eb", overflow: "hidden", marginBottom: "0.6rem" },
+  modeBtn:      { padding: "0.2rem 0.65rem", fontSize: "0.74rem", fontWeight: 500, border: "none", cursor: "pointer", backgroundColor: "#fff", color: "#6b7280" },
+  modeBtnActive:{ padding: "0.2rem 0.65rem", fontSize: "0.74rem", fontWeight: 700, border: "none", cursor: "pointer", backgroundColor: "#4f46e5", color: "#fff" },
+
+  sectionRow:   { display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.35rem 0", borderBottom: "1px solid #f3f4f6" },
+  secBadge:     { display: "inline-flex", alignItems: "center", justifyContent: "center", width: "20px", height: "20px", borderRadius: "50%", backgroundColor: "#eef2ff", color: "#4338ca", fontSize: "0.72rem", fontWeight: 800, flexShrink: 0 },
+  secCount:     { fontSize: "0.75rem", color: "#6b7280", flexShrink: 0, minWidth: "2.5rem" },
 };
 
 // ─── 메인 컴포넌트 ────────────────────────────────────────────────────────────
@@ -86,18 +95,36 @@ const s = {
 export default function RoomAssignmentPage({
   sessions, rooms, students, enrollments,
   examPlanReady, scheduleConfirmed,
-  onUpdateRoomIds, onUpdateAllRoomIds,
+  onUpdateRoomIds, onUpdateAllRoomIds, onUpdateSession,
   roomConfirmed, onConfirmRoom, onDeconfirmRoom,
 }) {
   const [gradeFilter, setGradeFilter] = useState("1");
   const [notice, setNotice]     = useState(null);
   const [assigning, setAssigning] = useState(false);
-  const [openPicker, setOpenPicker] = useState(null); // sessionId
+  // openPicker: { sessionId, section: null | string } | null
+  // section=null → Mode 1 roomIds, section="A" → Mode 2 sectionRoomAssignments["A"]
+  const [openPicker, setOpenPicker] = useState(null);
 
   function flash(msg, type = "ok") {
     setNotice({ msg, type });
     setTimeout(() => setNotice(null), 3500);
   }
+
+  // 분반 데이터가 있는 세션 집합 (elective 과목에 section 있을 때)
+  const sessionsWithSections = useMemo(() => {
+    const result = new Set();
+    for (const e of enrollments) {
+      if (!e.section) continue;
+      for (const sess of sessions) {
+        if (String(sess.grade) !== String(e.grade)) continue;
+        const matches = sess.subjectId && e.subjectId
+          ? sess.subjectId === e.subjectId
+          : sess.subjectName === e.subjectName;
+        if (matches) result.add(sess.id);
+      }
+    }
+    return result;
+  }, [sessions, enrollments]);
 
   // 고사실 충돌 계산
   const conflicts = useMemo(() => findRoomConflicts(sessions), [sessions]);
@@ -127,8 +154,12 @@ export default function RoomAssignmentPage({
   // (subjectRosterGenerator가 마지막 방 오버플로를 자동 처리하므로 출력물은 정상)
   const SOFT_OVERFLOW_MAX = 5;
 
-  // 배정된 방 총 용량 계산
+  // 배정된 방 총 용량 계산 (Mode 1: roomIds, Mode 2: sectionRoomAssignments 합산)
   function assignedCapacity(session) {
+    if (session.sectionMode === "section" && session.sectionRoomAssignments) {
+      const allRoomIds = [...new Set(Object.values(session.sectionRoomAssignments).flat())];
+      return allRoomIds.reduce((sum, rid) => sum + (roomById[rid]?.capacity ?? 0), 0);
+    }
     return (session.roomIds ?? []).reduce(
       (sum, rid) => sum + (roomById[rid]?.capacity ?? 0),
       0,
@@ -145,17 +176,27 @@ export default function RoomAssignmentPage({
     return map;
   }, [sessions]);
 
-  // 전체 자동 배정
+  // 전체 자동 배정 (Mode 1 세션만, Mode 2는 카드별 버튼으로)
   async function handleAutoAll() {
     if (!window.confirm(`${gradeFilter}학년 전체 과목을 자동 배정하시겠습니까?\n기존 배정이 초기화됩니다.`)) return;
     setAssigning(true);
     try {
       const gradeSess = sessions.filter((s) => String(s.grade) === gradeFilter);
-      const allResult = autoAssignAllRooms(gradeSess, rooms, students, enrollments);
-      // 다른 학년은 건드리지 않음
+      const mode1Sess = gradeSess.filter((s) => s.sectionMode !== "section");
+      const mode2Sess = gradeSess.filter((s) => s.sectionMode === "section");
+
       const patch = {};
-      gradeSess.forEach((s) => { if (allResult[s.id] !== undefined) patch[s.id] = allResult[s.id]; });
-      onUpdateAllRoomIds(patch);
+      if (mode1Sess.length > 0) {
+        const allResult = autoAssignAllRooms(mode1Sess, rooms, students, enrollments);
+        mode1Sess.forEach((s) => { if (allResult[s.id] !== undefined) patch[s.id] = allResult[s.id]; });
+        onUpdateAllRoomIds(patch);
+      }
+      // Mode 2 세션 분반별 자동 배정
+      for (const session of mode2Sess) {
+        const sectionResult = autoAssignSectionRooms(session, rooms, students, enrollments);
+        onUpdateSession?.(session.id, { sectionRoomAssignments: sectionResult });
+      }
+
       flash(`${gradeFilter}학년 자동 배정 완료`, "ok");
     } catch (e) {
       flash("자동 배정 중 오류가 발생했습니다.", "err");
@@ -164,31 +205,67 @@ export default function RoomAssignmentPage({
     }
   }
 
-  // 단일 과목 자동 배정
+  // 단일 과목 자동 배정 (Mode 1)
   function handleAutoOne(session) {
     const singleResult = autoAssignAllRooms([session], rooms, students, enrollments);
     const roomIds = singleResult[session.id] ?? [];
     onUpdateRoomIds(session.id, roomIds);
   }
 
-  // 방 추가/제거
+  // 분반별 전체 자동 배정 (Mode 2)
+  function handleAutoSectionAll(session) {
+    const sectionResult = autoAssignSectionRooms(session, rooms, students, enrollments);
+    onUpdateSession?.(session.id, { sectionRoomAssignments: sectionResult });
+  }
+
+  // 방 추가/제거 (Mode 1)
   function toggleRoom(session, roomId) {
     const cur = session.roomIds ?? [];
     const next = cur.includes(roomId) ? cur.filter((id) => id !== roomId) : [...cur, roomId];
     onUpdateRoomIds(session.id, next);
   }
 
-  // 개별 과목 초기화
+  // 분반 방 추가/제거 (Mode 2)
+  function toggleSectionRoom(session, section, roomId) {
+    const cur = (session.sectionRoomAssignments ?? {})[section] ?? [];
+    const next = cur.includes(roomId) ? cur.filter((id) => id !== roomId) : [...cur, roomId];
+    onUpdateSession?.(session.id, {
+      sectionRoomAssignments: { ...(session.sectionRoomAssignments ?? {}), [section]: next },
+    });
+  }
+
+  // 개별 과목 초기화 (Mode 1)
   function clearRooms(session) {
     onUpdateRoomIds(session.id, []);
+  }
+
+  // 분반 배정 초기화 (Mode 2)
+  function clearSectionRooms(session) {
+    onUpdateSession?.(session.id, { sectionRoomAssignments: {} });
+  }
+
+  // 배정 방식 토글
+  function toggleSectionMode(session, mode) {
+    if (mode === "section") {
+      onUpdateSession?.(session.id, { sectionMode: "section", sectionRoomAssignments: session.sectionRoomAssignments ?? {} });
+    } else {
+      onUpdateSession?.(session.id, { sectionMode: "none" });
+    }
+    setOpenPicker(null);
   }
 
   // 학년 전체 초기화
   function handleClearAll() {
     if (!window.confirm(`${gradeFilter}학년 고사실 배정을 모두 초기화하시겠습니까?`)) return;
     const patch = {};
-    sessions.filter((s) => String(s.grade) === gradeFilter).forEach((s) => { patch[s.id] = []; });
-    onUpdateAllRoomIds(patch);
+    sessions.filter((s) => String(s.grade) === gradeFilter).forEach((s) => {
+      if (s.sectionMode === "section") {
+        onUpdateSession?.(s.id, { sectionRoomAssignments: {} });
+      } else {
+        patch[s.id] = [];
+      }
+    });
+    if (Object.keys(patch).length > 0) onUpdateAllRoomIds(patch);
     flash(`${gradeFilter}학년 배정 초기화 완료`, "ok");
   }
 
@@ -326,10 +403,19 @@ export default function RoomAssignmentPage({
             const pct      = count > 0 ? (cap / count) * 100 : 0;
             const over     = cap > count + 5;
             const softShort = shortage > 0 && shortage <= SOFT_OVERFLOW_MAX;
-            const pickerOpen = openPicker === session.id;
             // 선택과목 상태 분류
             const isUnscheduled = !session.isRequired && (!session.dayId || !session.periodId);
             const hasNoCount    = !session.isRequired && count === 0;
+            const hasSections   = !session.isRequired && sessionsWithSections.has(session.id);
+            const sectionMode   = session.sectionMode ?? "none"; // "none" | "section"
+            const isMode2       = sectionMode === "section";
+            // Mode 1 picker
+            const pickerOpen = openPicker?.sessionId === session.id && openPicker?.section === null;
+
+            // 분반별 배정 데이터 (Mode 2)
+            const sectionCounts     = hasSections ? getSectionCounts(session, enrollments) : {};
+            const sectionAssigns    = session.sectionRoomAssignments ?? {};
+            const sectionKeys       = Object.keys(sectionCounts).sort();
 
             return (
               <div key={session.id} style={hasConflict ? s.cardConflict : s.card}>
@@ -350,79 +436,155 @@ export default function RoomAssignmentPage({
                   </div>
                 </div>
 
-                {/* 용량 바 */}
-                <div style={s.barWrap}>
-                  <div style={s.barFill(pct, over, softShort)} />
-                </div>
-                <p style={s.barLabel}>
-                  {cap === 0
-                    ? "미배정"
-                    : over
-                    ? `정원 초과 (배정 ${cap}명 / 응시 ${count}명)`
-                    : cap >= count
-                    ? `배정 완료 (${cap}명 수용)`
-                    : softShort
-                    ? `정원 초과 운영 — ${shortage}명 추가배치 (책상 추가)`
-                    : `부족 (배정 ${cap}명 / 필요 ${count}명)`}
-                </p>
+                {/* 배정 방식 토글 (분반 데이터 있는 선택과목만) */}
+                {hasSections && (
+                  <div style={s.modeToggle}>
+                    <button
+                      style={!isMode2 ? s.modeBtnActive : s.modeBtn}
+                      onClick={() => toggleSectionMode(session, "none")}
+                    >학번순 배정</button>
+                    <button
+                      style={isMode2 ? s.modeBtnActive : s.modeBtn}
+                      onClick={() => toggleSectionMode(session, "section")}
+                    >분반별 배정</button>
+                  </div>
+                )}
 
-                {/* 배정된 방 chips */}
-                <div style={s.chipRow}>
-                  {(session.roomIds ?? []).length === 0 ? (
-                    <span style={s.noRoom}>배정된 고사실 없음</span>
-                  ) : (
-                    (session.roomIds ?? []).map((rid) => {
-                      const isConflict = conflictRooms?.has(rid);
-                      return (
-                        <span key={rid} style={isConflict ? s.chipConflict : s.chip}>
-                          {roomById[rid]?.name ?? rid}
-                          <span style={s.chipX} onClick={() => toggleRoom(session, rid)}>✕</span>
-                        </span>
-                      );
-                    })
-                  )}
-                </div>
+                {/* ── Mode 2: 분반별 배정 UI ── */}
+                {isMode2 ? (
+                  <>
+                    {sectionKeys.length === 0 ? (
+                      <p style={s.noRoom}>분반 데이터가 없습니다.</p>
+                    ) : (
+                      sectionKeys.map((sec) => {
+                        const secRoomIds = sectionAssigns[sec] ?? [];
+                        const secPickerOpen = openPicker?.sessionId === session.id && openPicker?.section === sec;
+                        return (
+                          <div key={sec} style={s.sectionRow}>
+                            <span style={s.secBadge}>{sec}</span>
+                            <span style={s.secCount}>{sectionCounts[sec]}명</span>
+                            <div style={{ ...s.chipRow, flex: 1, marginBottom: 0 }}>
+                              {secRoomIds.length === 0 ? (
+                                <span style={s.noRoom}>미배정</span>
+                              ) : (
+                                secRoomIds.map((rid) => {
+                                  const isConflict = conflictRooms?.has(rid);
+                                  return (
+                                    <span key={rid} style={isConflict ? s.chipConflict : s.chip}>
+                                      {roomById[rid]?.name ?? rid}
+                                      <span style={s.chipX} onClick={() => toggleSectionRoom(session, sec, rid)}>✕</span>
+                                    </span>
+                                  );
+                                })
+                              )}
+                            </div>
+                            <button
+                              style={{ ...s.smBtn, color: "#374151", borderColor: "#d1d5db", flexShrink: 0 }}
+                              onClick={() => setOpenPicker(secPickerOpen ? null : { sessionId: session.id, section: sec })}
+                            >
+                              {secPickerOpen ? "닫기" : "선택"}
+                            </button>
+                            {secPickerOpen && (
+                              <div style={{ position: "absolute", zIndex: 10 }}>
+                                <RoomPicker
+                                  session={{ ...session, roomIds: secRoomIds }}
+                                  rooms={rooms}
+                                  onToggle={(rid) => toggleSectionRoom(session, sec, rid)}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                    {/* Mode 2 버튼 행 */}
+                    <div style={{ ...s.cardFooter, marginTop: "0.6rem" }}>
+                      <button style={s.smBtn} onClick={() => handleAutoSectionAll(session)}>
+                        전체 분반 자동 배정
+                      </button>
+                      {Object.values(sectionAssigns).some((ids) => ids.length > 0) && (
+                        <button style={s.dangerBtn} onClick={() => clearSectionRooms(session)}>초기화</button>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* ── Mode 1: 기존 UI ── */}
+                    {/* 용량 바 */}
+                    <div style={s.barWrap}>
+                      <div style={s.barFill(pct, over, softShort)} />
+                    </div>
+                    <p style={s.barLabel}>
+                      {cap === 0
+                        ? "미배정"
+                        : over
+                        ? `정원 초과 (배정 ${cap}명 / 응시 ${count}명)`
+                        : cap >= count
+                        ? `배정 완료 (${cap}명 수용)`
+                        : softShort
+                        ? `정원 초과 운영 — ${shortage}명 추가배치 (책상 추가)`
+                        : `부족 (배정 ${cap}명 / 필요 ${count}명)`}
+                    </p>
 
-                {/* 상태 힌트 */}
+                    {/* 배정된 방 chips */}
+                    <div style={s.chipRow}>
+                      {(session.roomIds ?? []).length === 0 ? (
+                        <span style={s.noRoom}>배정된 고사실 없음</span>
+                      ) : (
+                        (session.roomIds ?? []).map((rid) => {
+                          const isConflict = conflictRooms?.has(rid);
+                          return (
+                            <span key={rid} style={isConflict ? s.chipConflict : s.chip}>
+                              {roomById[rid]?.name ?? rid}
+                              <span style={s.chipX} onClick={() => toggleRoom(session, rid)}>✕</span>
+                            </span>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* 버튼 행 */}
+                    <div style={s.cardFooter}>
+                      {session.isRequired ? (
+                        <button style={s.smBtn} onClick={() => handleAutoOne(session)}>자동 배정</button>
+                      ) : !isUnscheduled && !hasNoCount ? (
+                        <button style={s.smBtn} onClick={() => handleAutoOne(session)}>자동 배정</button>
+                      ) : null}
+                      <button
+                        style={{ ...s.smBtn, color: "#374151", borderColor: "#d1d5db" }}
+                        onClick={() => setOpenPicker(pickerOpen ? null : { sessionId: session.id, section: null })}
+                      >
+                        {pickerOpen ? "닫기" : "수동 선택"}
+                      </button>
+                      {(session.roomIds ?? []).length > 0 && (
+                        <button style={s.dangerBtn} onClick={() => clearRooms(session)}>초기화</button>
+                      )}
+                    </div>
+
+                    {/* 방 선택 패널 */}
+                    {pickerOpen && (
+                      <RoomPicker
+                        session={session}
+                        rooms={rooms}
+                        onToggle={(rid) => toggleRoom(session, rid)}
+                      />
+                    )}
+                  </>
+                )}
+
+                {/* 상태 힌트 (공통) */}
                 {hasConflict && (
                   <p style={s.conflictMsg}>⚠ 같은 교시에 중복 배정된 고사실 있음</p>
                 )}
-                {isUnscheduled && !hasConflict && (
+                {!isMode2 && isUnscheduled && !hasConflict && (
                   <p style={{ fontSize: "0.73rem", color: "#92400e", fontWeight: 600, marginTop: "0.3rem" }}>
                     일정 미배치 — 일정 배치 탭에서 교시 지정 후 자동 배정 가능
                   </p>
                 )}
-                {hasNoCount && !isUnscheduled && (
+                {!isMode2 && hasNoCount && !isUnscheduled && (
                   <p style={{ fontSize: "0.73rem", color: "#6b7280", marginTop: "0.3rem" }}>
                     응시 인원 미확정 — 시험계획 탭에서 재확정 필요
                   </p>
-                )}
-
-                {/* 버튼 행 */}
-                <div style={s.cardFooter}>
-                  {session.isRequired ? (
-                    <button style={s.smBtn} onClick={() => handleAutoOne(session)}>자동 배정</button>
-                  ) : !isUnscheduled && !hasNoCount ? (
-                    <button style={s.smBtn} onClick={() => handleAutoOne(session)}>자동 배정</button>
-                  ) : null}
-                  <button
-                    style={{ ...s.smBtn, color: "#374151", borderColor: "#d1d5db" }}
-                    onClick={() => setOpenPicker(pickerOpen ? null : session.id)}
-                  >
-                    {pickerOpen ? "닫기" : "수동 선택"}
-                  </button>
-                  {(session.roomIds ?? []).length > 0 && (
-                    <button style={s.dangerBtn} onClick={() => clearRooms(session)}>초기화</button>
-                  )}
-                </div>
-
-                {/* 방 선택 패널 */}
-                {pickerOpen && (
-                  <RoomPicker
-                    session={session}
-                    rooms={rooms}
-                    onToggle={(rid) => toggleRoom(session, rid)}
-                  />
                 )}
               </div>
             );

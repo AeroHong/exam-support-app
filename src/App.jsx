@@ -57,7 +57,8 @@ function App() {
   const demoMode = auth.profile?.role === "demo";
   const [demoSchoolMode, setDemoSchoolMode] = useState(false); // super admin이 demo school UI에 진입한 상태
   const [selectedPlanId, setSelectedPlanId] = useState(null);
-  const [activePage, setActivePage] = useState("data");
+  const [activePage, setActivePage] = useState("examplan");
+  const [dataPageOpen, setDataPageOpen] = useState(false);
   const [draftStudents, setDraftStudents] = useState([]);
   const [draftEnrollments, setDraftEnrollments] = useState([]);
   const [versionModalOpen, setVersionModalOpen] = useState(false);
@@ -94,6 +95,7 @@ function App() {
   useEffect(() => {
     if (auth.status === "signed_out") {
       setSelectedPlanId(null);
+      setDataPageOpen(false);
       setDemoSchoolMode(false);
     }
   }, [auth.status]);
@@ -356,6 +358,39 @@ function App() {
   const currentOwnerId = auth.user?.uid;
   const currentUserName = demoMode ? "데모 사용자" : (auth.user?.displayName ?? auth.user?.email);
 
+  // 고사 미선택 → 기초 데이터 독립 페이지
+  if (selectedPlanId === null && dataPageOpen) {
+    return (
+      <div style={s.page}>
+        <header style={s.header}>
+          <div style={s.headerTop}>
+            <div>
+              <p style={s.eyebrow}>시험 운영 지원 플랫폼</p>
+              <h1 style={s.headerTitle}>{schoolName}</h1>
+            </div>
+            <div style={s.headerRight}>
+              <span style={s.userChip}>{currentUserName}</span>
+              <button style={s.outlineBtn} onClick={() => setDataPageOpen(false)}>← 대시보드</button>
+              <button style={s.outlineBtn} onClick={demoSchoolMode ? () => { setDemoSchoolMode(false); } : auth.logout}>
+                {demoSchoolMode ? "← 관리자 콘솔" : demoMode ? "데모 종료" : "로그아웃"}
+              </button>
+            </div>
+          </div>
+        </header>
+        <DataManagementPage
+          schoolId={currentSchoolId}
+          students={effectiveStudents}
+          enrollments={effectiveEnrollments}
+          subjects={baseSubjects}
+          onDataChanged={handleDataChanged}
+          onReloadStudents={tenantData.reload}
+          readOnly={demoMode}
+        />
+        <AppFooter />
+      </div>
+    );
+  }
+
   // 고사 미선택 → 대시보드
   if (selectedPlanId === null) {
     return (
@@ -364,9 +399,13 @@ function App() {
         ownerId={currentOwnerId}
         schoolName={schoolName}
         userName={currentUserName}
+        students={tenantData.students}
+        rooms={tenantData.rooms}
+        subjects={tenantData.subjects}
+        onGoToData={() => setDataPageOpen(true)}
         onSelectExam={(planId) => {
           setSelectedPlanId(planId);
-          setActivePage("data");
+          setActivePage("examplan");
           setDataChangeLog(null);
         }}
         onLogout={demoSchoolMode ? () => { setDemoSchoolMode(false); setSelectedPlanId(null); } : auth.logout}
@@ -450,7 +489,7 @@ function App() {
       {/* ── 페이지 콘텐츠 ── */}
       <main>
         {activePage === "data" ? (
-          <DataManagementPage schoolId={currentSchoolId} students={effectiveStudents} subjects={baseSubjects} onDataChanged={handleDataChanged} onReloadStudents={tenantData.reload} readOnly={demoMode} />
+          <DataManagementPage schoolId={currentSchoolId} students={effectiveStudents} enrollments={effectiveEnrollments} subjects={baseSubjects} onDataChanged={handleDataChanged} onReloadStudents={tenantData.reload} readOnly={demoMode} />
         ) : null}
 
         {activePage === "examplan" ? (
@@ -514,6 +553,7 @@ function App() {
                 ),
               }))
             }
+            onUpdateSession={updateSession}
             roomConfirmed={plan.roomConfirmed ?? {}}
             onConfirmRoom={handleConfirmRoom}
             onDeconfirmRoom={handleDeconfirmRoom}

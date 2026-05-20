@@ -176,14 +176,60 @@ export function generateSubjectRosters(plan, students, enrollments, rooms, subje
     const separate = allStudents.filter((s) => s.examStatus === "separate");
     const delegation = allStudents.filter((s) => s.examStatus === "delegation");
     const normal = allStudents.filter((s) => !s.examStatus || s.examStatus === "");
-
-    // 위탁 제외 전체 → 고사실 자동 배분
     const nonDelegation = allStudents.filter((s) => s.examStatus !== "delegation");
-    const { roomGroups, assignedMap } = autoAssignToRooms(
-      nonDelegation,
-      session.roomIds || [],
-      rooms
-    );
+
+    let roomGroups;
+    let assignedMap;
+
+    if (session.sectionMode === "section" && session.sectionRoomAssignments && Object.keys(session.sectionRoomAssignments).length > 0) {
+      // Mode 2: 분반별로 roomGroups 구성
+      const studentSection = new Map();
+      for (const e of enrollments) {
+        if (String(e.grade) !== String(session.grade)) continue;
+        const matches = session.subjectId && e.subjectId
+          ? e.subjectId === session.subjectId
+          : e.subjectName === session.subjectName;
+        if (matches && e.section) studentSection.set(e.studentId, e.section);
+      }
+
+      const mergedMap = new Map();
+      const allSectionGroups = [];
+
+      for (const sectionLetter of Object.keys(session.sectionRoomAssignments).sort()) {
+        const sectionRoomIds = session.sectionRoomAssignments[sectionLetter];
+        const sectionStudents = nonDelegation
+          .filter((s) => studentSection.get(s.id) === sectionLetter)
+          .sort((a, b) => {
+            const cd = Number(a.classNo) - Number(b.classNo);
+            return cd !== 0 ? cd : Number(a.number) - Number(b.number);
+          });
+
+        const { roomGroups: rgs, assignedMap: am } = autoAssignToRooms(sectionStudents, sectionRoomIds, rooms);
+        am.forEach((v, k) => mergedMap.set(k, v));
+        rgs.forEach((rg) => allSectionGroups.push({ ...rg, section: sectionLetter }));
+      }
+
+      // 분반 없는 학생 처리 (section 데이터 없는 경우 폴백)
+      const unsectioned = nonDelegation.filter((s) => !studentSection.has(s.id));
+      if (unsectioned.length > 0) {
+        const allSectionRoomIds = [...new Set(Object.values(session.sectionRoomAssignments).flat())];
+        const { roomGroups: rgs2, assignedMap: am2 } = autoAssignToRooms(unsectioned, allSectionRoomIds, rooms);
+        am2.forEach((v, k) => mergedMap.set(k, v));
+        rgs2.forEach((rg) => allSectionGroups.push(rg));
+      }
+
+      roomGroups = allSectionGroups;
+      assignedMap = mergedMap;
+    } else {
+      // Mode 1: 기존 학번순 배분
+      const { roomGroups: rg, assignedMap: am } = autoAssignToRooms(
+        nonDelegation,
+        session.roomIds || [],
+        rooms,
+      );
+      roomGroups = rg;
+      assignedMap = am;
+    }
 
     // 과목별 현황표용: 전체 학생 + 배정 방 정보
     const studentsWithRoom = allStudents.map((s) => {
@@ -206,6 +252,7 @@ export function generateSubjectRosters(plan, students, enrollments, rooms, subje
       subjectCode: subject?.subjectCode || "",
       grade: session.grade,
       isEssay: session.isEssay || false,
+      sectionMode: session.sectionMode ?? "none",
       dayLabel: day?.label || "",
       periodLabel: period?.label || "",
       startTime: session.startTime || "",

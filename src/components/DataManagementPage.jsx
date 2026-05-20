@@ -1,5 +1,6 @@
 import { useState } from "react";
 import RoomsTab from "./RoomsTab";
+import SectionDataTab from "./SectionDataTab";
 import StudentRosterTab from "./StudentRosterTab";
 import SubjectsTab from "./SubjectsTab";
 
@@ -7,6 +8,7 @@ const TABS = [
   { key: "subjects", label: "과목" },
   { key: "students", label: "학생 명렬" },
   { key: "rooms",    label: "고사실" },
+  { key: "sections", label: "분반 데이터" },
 ];
 
 const s = {
@@ -20,7 +22,7 @@ const s = {
   arrow:     { fontSize: "0.75rem", color: "#d1d5db", userSelect: "none" },
 };
 
-export default function DataManagementPage({ schoolId, students = [], subjects = [], onDataChanged, onReloadStudents, readOnly = false }) {
+export default function DataManagementPage({ schoolId, students = [], enrollments = [], subjects = [], onDataChanged, onReloadStudents, readOnly = false }) {
   const [activeTab, setActiveTab] = useState("subjects");
 
   return (
@@ -52,6 +54,7 @@ export default function DataManagementPage({ schoolId, students = [], subjects =
       {activeTab === "students" && <StudentRosterTab schoolId={schoolId} subjects={subjects} onDataChanged={onDataChanged} onReloadStudents={onReloadStudents} readOnly={readOnly} />}
       {activeTab === "rooms"    && <RoomsTab    schoolId={schoolId} students={students} readOnly={readOnly} />}
       {activeTab === "subjects" && <SubjectsTab schoolId={schoolId} onDataChanged={onDataChanged} readOnly={readOnly} />}
+      {activeTab === "sections" && <SectionDataTab schoolId={schoolId} enrollments={enrollments} onDataChanged={onDataChanged} readOnly={readOnly} />}
     </div>
   );
 }

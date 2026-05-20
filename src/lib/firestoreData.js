@@ -264,9 +264,27 @@ export async function deleteSubjectsByYear(schoolId, entryYear) {
 // ─── 수강 신청 (Enrollments) ─────────────────────────────
 
 /**
+ * 분반 파일에서 학생 upsert (기존 examStatus 등 유지, merge: true)
+ */
+export async function upsertStudentsFromSection(schoolId, students) {
+  if (!firebaseDb || !schoolId || !students.length) return;
+  const CHUNK = 500;
+  for (let i = 0; i < students.length; i += CHUNK) {
+    const batch = writeBatch(firebaseDb);
+    students.slice(i, i + CHUNK).forEach((student) => {
+      const { id, ...data } = student;
+      if (!id) return;
+      const ref = doc(firebaseDb, "schools", schoolId, "students", id);
+      batch.set(ref, { ...data, updatedAt: serverTimestamp() }, { merge: true });
+    });
+    await batch.commit();
+  }
+}
+
+/**
  * 학년별 enrollment 전체 교체.
- * enrollment 스키마: { studentId, subjectName, grade }
- * subjectId는 추후 과목 매칭 시 채워진다.
+ * enrollment 스키마: { studentId, subjectName, grade, section? }
+ * section: null | "A" | "B" | "C" | "D" | "E"
  */
 export async function bulkSaveEnrollmentsByGrade(schoolId, enrollments, grade) {
   if (!firebaseDb || !schoolId || !grade) return;
