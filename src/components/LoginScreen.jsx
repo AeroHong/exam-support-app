@@ -2,6 +2,63 @@ import { useState } from "react";
 import { fetchSchoolIndex } from "../lib/firestoreSchool";
 import AppFooter from "./AppFooter";
 
+const CHANGELOG = [
+  {
+    version: "v2.1",
+    label: "최신",
+    title: "분반(A~E) 데이터 지원",
+    points: [
+      "분반별 고사실 배정 (Mode 2) — 분반마다 고사실 개별 지정",
+      "분반 파일 1행·3행 헤더 자동 감지, 다중 시트 지원",
+      "학생 명렬 탭에서 학생·선택과목·분반 데이터 일괄 업로드",
+    ],
+  },
+  {
+    version: "v2.0",
+    title: "일정 배치 나란히 보기",
+    points: [
+      "2·3학년 일정 분할 패널 동시 보기",
+      "미배치 과목 좌우 패널 독립 표시",
+    ],
+  },
+  {
+    version: "v1.9",
+    title: "출력물 확대 및 UX 개선",
+    points: [
+      "시험시간표·학급별 응시인원 현황 출력물 추가",
+      "모든 테이블 컬럼 정렬 기능",
+      "삼성고 Excel 파싱 버그 수정",
+    ],
+  },
+  {
+    version: "v1.5",
+    title: "데모 모드 · 멀티 고사 대시보드",
+    points: [
+      "로그인 없이 데모 체험",
+      "학년도별 멀티 고사 대시보드",
+      "학교 검색 기반 등록 플로우",
+    ],
+  },
+  {
+    version: "v1.2",
+    title: "일정 자동 배치 · 고사실 배정 · 출력물",
+    points: [
+      "일정 자동 배치 알고리즘 (충돌 감지 포함)",
+      "고사실 자동 배정 알고리즘",
+      "출력물 관리 시스템 (감독관 배치표, 좌석 배치도)",
+    ],
+  },
+  {
+    version: "v1.0",
+    title: "시스템 초기 구축",
+    points: [
+      "멀티테넌트 인증 (Google 계정)",
+      "학생 명렬·과목·고사실 기초 데이터 관리",
+      "시험계획 (기간·교시·과목 세션) 관리",
+    ],
+  },
+];
+
 const FEATURES = [
   {
     icon: "📋",
@@ -144,6 +201,42 @@ const s = {
   pointText: { fontSize: "0.81rem", color: "#4b5563", lineHeight: 1.6, margin: 0 },
 
 
+  // ── Changelog ───────────────────────────────────────────────────────
+  changelog: {
+    padding: "0 2rem 3rem", maxWidth: "1080px",
+    margin: "0 auto", width: "100%", boxSizing: "border-box",
+  },
+  changelogLabel: {
+    fontSize: "0.71rem", fontWeight: 700, color: "#6366f1",
+    letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: "1.25rem",
+  },
+  changelogList: { display: "flex", flexDirection: "column", gap: "0" },
+  changelogItem: {
+    display: "flex", gap: "1rem", alignItems: "flex-start",
+    padding: "1rem 0", borderBottom: "1px solid #f1f5f9",
+  },
+  clVersionCol: { flexShrink: 0, width: "52px", paddingTop: "2px" },
+  clVersion: {
+    display: "inline-block", fontSize: "0.72rem", fontWeight: 700,
+    backgroundColor: "#eef2ff", color: "#4f46e5",
+    padding: "0.15rem 0.45rem", borderRadius: "5px",
+  },
+  clLatest: {
+    display: "block", fontSize: "0.65rem", fontWeight: 600,
+    color: "#059669", marginTop: "0.3rem",
+  },
+  clBody: { flex: 1 },
+  clTitle: { fontSize: "0.88rem", fontWeight: 700, color: "#1e1b4b", margin: "0 0 0.4rem" },
+  clPoints: { display: "flex", flexDirection: "column", gap: "0.25rem" },
+  clPoint: { fontSize: "0.79rem", color: "#6b7280", lineHeight: 1.5, margin: 0 },
+  moreBtn: {
+    marginTop: "1rem",
+    background: "none", border: "1px solid #e0e7ff",
+    borderRadius: "8px", padding: "0.5rem 1.25rem",
+    fontSize: "0.82rem", fontWeight: 600, color: "#6366f1",
+    cursor: "pointer", width: "100%",
+  },
+
   // ── 학교 설정 화면 공통 ──────────────────────────────────────────────
   setupBox: {
     minHeight: "100vh", display: "flex",
@@ -226,6 +319,7 @@ export default function LoginScreen({ status, error, onSignIn, onJoinSchool, onC
   const [results, setResults] = useState(null); // null = 검색 전, [] = 검색 결과 없음
   const [searching, setSearching] = useState(false);
   const [confirmName, setConfirmName] = useState(null); // 새 학교 등록 확인 대기 중인 이름
+  const [showAllChangelog, setShowAllChangelog] = useState(false);
 
   const isLoading = status === "loading" || status === "resolving";
 
@@ -368,16 +462,6 @@ export default function LoginScreen({ status, error, onSignIn, onJoinSchool, onC
             )}
           </div>
 
-          {/* 개발 현황 배지 */}
-          <div style={s.versionRow}>
-            <span style={s.versionBadge}>v2.0</span>
-            <span style={s.versionDot}>·</span>
-            <span style={s.versionBadge}>멀티 고사 대시보드 ✓</span>
-            <span style={s.versionDot}>·</span>
-            <span style={s.versionBadge}>데모 모드 ✓</span>
-            <span style={s.versionDot}>·</span>
-            <span style={s.versionBadge}>출력물 생성 ✓</span>
-          </div>
         </div>
       </section>
 
@@ -402,6 +486,39 @@ export default function LoginScreen({ status, error, onSignIn, onJoinSchool, onC
             </div>
           ))}
         </div>
+      </section>
+
+      {/* 개발 현황 */}
+      <section style={s.changelog}>
+        <p style={s.changelogLabel}>개발 현황</p>
+        <div style={s.changelogList}>
+          {(showAllChangelog ? CHANGELOG : CHANGELOG.slice(0, 3)).map((item) => (
+            <div key={item.version} style={s.changelogItem}>
+              <div style={s.clVersionCol}>
+                <span style={s.clVersion}>{item.version}</span>
+                {item.label && <span style={s.clLatest}>{item.label}</span>}
+              </div>
+              <div style={s.clBody}>
+                <p style={s.clTitle}>{item.title}</p>
+                <div style={s.clPoints}>
+                  {item.points.map((pt, i) => (
+                    <p key={i} style={s.clPoint}>· {pt}</p>
+                  ))}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        {!showAllChangelog && (
+          <button style={s.moreBtn} onClick={() => setShowAllChangelog(true)}>
+            더보기 ▾ ({CHANGELOG.length - 3}개 이전 버전)
+          </button>
+        )}
+        {showAllChangelog && (
+          <button style={s.moreBtn} onClick={() => setShowAllChangelog(false)}>
+            접기 ▴
+          </button>
+        )}
       </section>
 
       <AppFooter />
