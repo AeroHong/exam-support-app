@@ -178,14 +178,16 @@ export function useAuth() {
         if (!school) school = await lookupSchoolByDomain(domain);
         if (!school) school = await lookupSchoolByEmail(email);
 
-        // ── 학교 찾음 → school_admin으로 로그인 완료 ─────────────────────
+        // ── 학교 찾음 → 로그인 완료 ──────────────────────────────────────
+        // 기존 userDoc에 role이 있으면 유지, 신규 유저는 teacher
         if (school) {
+          const role = existingUserDoc?.role ?? "teacher";
           const profile = {
             email,
             displayName: user.displayName ?? "",
             schoolId: school.schoolId,
             schoolName: school.schoolName,
-            role: "school_admin",
+            role,
             isGuest: false,
           };
 
@@ -194,7 +196,7 @@ export function useAuth() {
             displayName: user.displayName ?? "",
             schoolId: school.schoolId,
             schoolName: school.schoolName,
-            role: "school_admin",
+            role,
             isGuest: false,
           });
 

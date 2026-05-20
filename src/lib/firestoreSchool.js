@@ -150,7 +150,7 @@ export async function joinSchool(uid, email, displayName, schoolId, schoolName) 
     displayName: displayName ?? "",
     schoolId,
     schoolName,
-    role: "school_admin",
+    role: "teacher",
   });
 }
 
