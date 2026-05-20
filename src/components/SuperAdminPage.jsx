@@ -239,6 +239,17 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
     }
   }
 
+  async function handleUnlinkUser(uid, email) {
+    if (!firebaseDb) return;
+    if (!window.confirm(`"${email}" 유저를 학교에서 해제하시겠습니까?\n해당 유저는 다음 로그인 시 학교를 다시 선택해야 합니다.`)) return;
+    try {
+      await updateDoc(doc(firebaseDb, "users", uid), { schoolId: null, schoolName: "" });
+      setUsers((prev) => prev.map((u) => u.uid === uid ? { ...u, schoolId: null, schoolName: "" } : u));
+    } catch (err) {
+      setReassignError("해제 실패: " + err.message);
+    }
+  }
+
   async function handleReassignUser() {
     if (!reassigningUser || !firebaseDb) return;
     const { uid, selectedSchoolId } = reassigningUser;
@@ -511,12 +522,20 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
                                                     {reassignError && <span style={{ color: "#dc2626", fontSize: "0.72rem" }}>{reassignError}</span>}
                                                   </span>
                                                 ) : (
-                                                  <button
-                                                    style={s.editBtn}
-                                                    onClick={() => setReassigningUser({ uid: u.uid, selectedSchoolId: u.schoolId || school.id })}
-                                                  >
-                                                    학교 변경
-                                                  </button>
+                                                  <span style={{ display: "flex", gap: "0.3rem" }}>
+                                                    <button
+                                                      style={s.editBtn}
+                                                      onClick={() => setReassigningUser({ uid: u.uid, selectedSchoolId: u.schoolId || school.id })}
+                                                    >
+                                                      학교 변경
+                                                    </button>
+                                                    <button
+                                                      style={s.deleteBtn}
+                                                      onClick={() => handleUnlinkUser(u.uid, u.email)}
+                                                    >
+                                                      해제
+                                                    </button>
+                                                  </span>
                                                 )}
                                               </td>
                                             </tr>
@@ -549,12 +568,12 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
                 <div style={s.formGrid2}>
                   <div>
                     <label style={s.label}>학교 ID</label>
-                    <input style={s.input} placeholder="예: seonyu-hs" value={newSchool.schoolId}
+                    <input style={s.input} placeholder="예: hakgyo-hs" value={newSchool.schoolId}
                       onChange={(e) => setNewSchool((p) => ({ ...p, schoolId: e.target.value }))} />
                   </div>
                   <div>
                     <label style={s.label}>학교명</label>
-                    <input style={s.input} placeholder="예: 선유고등학교" value={newSchool.schoolName}
+                    <input style={s.input} placeholder="예: ○○고등학교" value={newSchool.schoolName}
                       onChange={(e) => setNewSchool((p) => ({ ...p, schoolName: e.target.value }))} />
                   </div>
                 </div>
@@ -634,17 +653,17 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
                 <div style={s.formGrid3}>
                   <div>
                     <label style={s.label}>도메인</label>
-                    <input style={s.input} placeholder="예: seonyu.hs.kr" value={newDomain.domain}
+                    <input style={s.input} placeholder="예: hakgyo.hs.kr" value={newDomain.domain}
                       onChange={(e) => setNewDomain((p) => ({ ...p, domain: e.target.value }))} />
                   </div>
                   <div>
                     <label style={s.label}>학교 ID</label>
-                    <input style={s.input} placeholder="예: seonyu-hs" value={newDomain.schoolId}
+                    <input style={s.input} placeholder="예: hakgyo-hs" value={newDomain.schoolId}
                       onChange={(e) => setNewDomain((p) => ({ ...p, schoolId: e.target.value }))} />
                   </div>
                   <div>
                     <label style={s.label}>학교명</label>
-                    <input style={s.input} placeholder="예: 선유고등학교" value={newDomain.schoolName}
+                    <input style={s.input} placeholder="예: ○○고등학교" value={newDomain.schoolName}
                       onChange={(e) => setNewDomain((p) => ({ ...p, schoolName: e.target.value }))} />
                   </div>
                 </div>
@@ -729,12 +748,12 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
                   </div>
                   <div>
                     <label style={s.label}>학교 ID</label>
-                    <input style={s.input} placeholder="예: seonyu-hs" value={newEmail.schoolId}
+                    <input style={s.input} placeholder="예: hakgyo-hs" value={newEmail.schoolId}
                       onChange={(e) => setNewEmail((p) => ({ ...p, schoolId: e.target.value }))} />
                   </div>
                   <div>
                     <label style={s.label}>학교명</label>
-                    <input style={s.input} placeholder="예: 선유고등학교" value={newEmail.schoolName}
+                    <input style={s.input} placeholder="예: ○○고등학교" value={newEmail.schoolName}
                       onChange={(e) => setNewEmail((p) => ({ ...p, schoolName: e.target.value }))} />
                   </div>
                 </div>
