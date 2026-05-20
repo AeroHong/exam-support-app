@@ -471,7 +471,7 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
                                     style={{ ...s.editBtn, whiteSpace: "nowrap" }}
                                     onClick={() => {
                                       setActiveTab("domains");
-                                      setNewDomain({ domain: "", schoolId: school.id, schoolName: school.name });
+                                      setNewDomain({ domain: "", schoolId: school.id, schoolName: school.name, ownerEmail: school.ownerEmail || "" });
                                     }}
                                   >
                                     도메인 등록 →
@@ -649,6 +649,12 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
                   <p style={s.sectionTitle}>도메인 추가</p>
                 </div>
               </div>
+              {newDomain.ownerEmail && (
+                <p style={{ fontSize: "0.8rem", color: "#6b7280", marginBottom: "0.75rem", padding: "0.5rem 0.75rem", backgroundColor: "#f9fafb", borderRadius: "6px", border: "1px solid #e5e7eb" }}>
+                  소유자 이메일: <span style={{ fontWeight: 700, color: "#374151" }}>{newDomain.ownerEmail}</span>
+                  <span style={{ color: "#9ca3af", marginLeft: "0.5rem" }}>(@{newDomain.ownerEmail.split("@")[1]})</span>
+                </p>
+              )}
               <form onSubmit={handleSaveDomain}>
                 <div style={s.formGrid3}>
                   <div>
