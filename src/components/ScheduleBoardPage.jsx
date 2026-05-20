@@ -171,6 +171,42 @@ const s = {
   modalRow:     { padding: "0.32rem 0.2rem", fontSize: "0.8rem", color: "#374151", borderBottom: "1px solid #f3f4f6" },
   modalEmpty:   { padding: "1.5rem 0", textAlign: "center", fontSize: "0.82rem", color: "#9ca3af" },
   modalCount:   { padding: "0.4rem 1rem 0.25rem", fontSize: "0.72rem", color: "#6b7280", borderBottom: "1px solid #f3f4f6", flexShrink: 0 },
+
+  // ── 나란히 보기 전용 스타일 ──────────────────────────────────────────────────
+
+  // 컴팩트 팔레트 (미배치 목록 — 분할 보기용 좌/우 슬라이드 패널)
+  miniPal:     (side) => ({
+    width: "88px", flexShrink: 0,
+    ...(side === "left" ? { borderRight: "1px solid #e5e7eb" } : { borderLeft: "1px solid #e5e7eb" }),
+    backgroundColor: "#f9fafb", display: "flex", flexDirection: "column", overflow: "hidden",
+  }),
+  miniPalHdr:  { padding: "0.35rem 0.4rem", borderBottom: "1px solid #e5e7eb", fontSize: "0.62rem", fontWeight: 700, color: "#6b7280", textAlign: "center", lineHeight: 1.4 },
+  miniPalBody: { flex: 1, overflowY: "auto", padding: "0.3rem 0.32rem" },
+  miniPalChip: (isDragging) => ({
+    padding: "0.2rem 0.28rem", marginBottom: "0.22rem",
+    backgroundColor: isDragging ? "#e0e7ff" : "#eef2ff",
+    border: "1px solid #c7d2fe", borderRadius: "5px",
+    cursor: "grab", opacity: isDragging ? 0.5 : 1,
+    fontSize: "0.63rem", fontWeight: 700, color: "#1e1b4b",
+    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+    lineHeight: 1.3,
+  }),
+  miniPalMeta: { fontSize: "0.56rem", color: "#6b7280", fontWeight: 400, marginTop: "0.06rem" },
+  miniPalDrop: { padding: "0.22rem", borderTop: "1px solid #e5e7eb", fontSize: "0.58rem", color: "#9ca3af", textAlign: "center", minHeight: "22px" },
+
+  // 각 학년 패널 상단 바 (확정·자동배치 등 컨트롤)
+  panelBar:    { display: "flex", alignItems: "center", gap: "0.3rem", padding: "0.35rem 0.55rem", backgroundColor: "#f8fafc", borderBottom: "1px solid #e5e7eb", flexShrink: 0, flexWrap: "wrap" },
+  panelTitle:  { fontSize: "0.88rem", fontWeight: 800, color: "#111827", flexShrink: 0 },
+  panelBtnPri: (disabled) => ({
+    padding: "0.22rem 0.52rem", backgroundColor: disabled ? "#a5b4fc" : "#4f46e5", color: "#fff",
+    border: "none", borderRadius: "6px", cursor: disabled ? "not-allowed" : "pointer",
+    fontSize: "0.72rem", fontWeight: 600, flexShrink: 0,
+  }),
+  panelBtnOut: { padding: "0.22rem 0.5rem", backgroundColor: "#fff", color: "#374151", border: "1px solid #d1d5db", borderRadius: "6px", cursor: "pointer", fontSize: "0.72rem", flexShrink: 0 },
+  panelBtnDng: { padding: "0.22rem 0.48rem", backgroundColor: "#fff", color: "#dc2626", border: "1px solid #fecaca", borderRadius: "6px", cursor: "pointer", fontSize: "0.72rem", flexShrink: 0 },
+
+  // 두 패널 사이 구분선
+  panelDivider: { width: "2px", alignSelf: "stretch", backgroundColor: "#d1d5db", flexShrink: 0 },
 };
 
 // ── 유틸 ─────────────────────────────────────────────────────────────────────
@@ -214,31 +250,34 @@ function getSameDayOtherGradeSessions(allSessions, dayId, currentGrade) {
   return result;
 }
 
-// ── 메인 컴포넌트 ─────────────────────────────────────────────────────────────
+// ── GradeBoardPanel ───────────────────────────────────────────────────────────
+// 단일 학년의 일정 배치 보드 전체를 담당하는 컴포넌트.
+// compact=true 이면 나란히 보기 모드 (미니 팔레트 + 패널 헤더).
+// compact=false 이면 단독 보기 모드 (풀사이즈 팔레트, 패널 헤더 포함).
 
-export default function ScheduleBoardPage({
+function GradeBoardPanel({
+  grade, palettePos, compact,
   days, periods, sessions, students, enrollments,
-  examPlanReady,
+  examPlanReady, scheduleConfirmed,
   onMove, onSessionChange, onDayChange, onSwapDays, onResetPlacements,
-  scheduleConfirmed, onConfirmSchedule, onDeconfirmSchedule,
+  onConfirmSchedule, onDeconfirmSchedule,
 }) {
-  const [gradeFilter, setGradeFilter] = useState("1");
-  const [dragId, setDragId]           = useState(null);        // 세션 드래그
-  const [dragOver, setDragOver]       = useState(null);        // "dayId__periodId"
-  const [dayDragId, setDayDragId]     = useState(null);        // 요일 드래그
-  const [dayDragOver, setDayDragOver] = useState(null);        // dayId (hover)
-  const [editingDayId, setEditingDayId] = useState(null);      // 요일 텍스트 편집
+  const [dragId, setDragId]             = useState(null);
+  const [dragOver, setDragOver]         = useState(null);
+  const [dayDragId, setDayDragId]       = useState(null);
+  const [dayDragOver, setDayDragOver]   = useState(null);
+  const [editingDayId, setEditingDayId] = useState(null);
   const [editingLabel, setEditingLabel] = useState("");
-  const [previews, setPreviews]       = useState(null);        // 자동배치 미리보기
-  const [modal, setModal]             = useState(null);        // 학생 명단 모달
-  const [manuallyPlacedIds, setManuallyPlacedIds] = useState(new Set()); // 수동 배치 세션 ID 추적
-  const [matrixOpen, setMatrixOpen] = useState(true);
-  const [editingTimeId, setEditingTimeId] = useState(null); // 시간 조정 인라인 편집 중인 세션
+  const [previews, setPreviews]         = useState(null);
+  const [modal, setModal]               = useState(null);
+  const [manuallyPlacedIds, setManuallyPlacedIds] = useState(new Set());
+  const [matrixOpen, setMatrixOpen]     = useState(!compact);
+  const [editingTimeId, setEditingTimeId] = useState(null);
 
   // 현재 학년 세션
   const gradeSessions = useMemo(
-    () => sessions.filter((s) => String(s.grade) === gradeFilter),
-    [sessions, gradeFilter],
+    () => sessions.filter((s) => String(s.grade) === grade),
+    [sessions, grade],
   );
 
   // 학생 집합 & Conflict Graph
@@ -281,15 +320,15 @@ export default function ScheduleBoardPage({
   const dayStatsMap = useMemo(() => {
     const map = {};
     for (const day of days) {
-      map[day.id] = computeDayStats(sessions, studentSets, day.id, periods, gradeFilter);
+      map[day.id] = computeDayStats(sessions, studentSets, day.id, periods, grade);
     }
     return map;
-  }, [sessions, studentSets, days, periods, gradeFilter]);
+  }, [sessions, studentSets, days, periods, grade]);
 
   // 학년 학생 목록 및 ID 조회맵
   const gradeStudents = useMemo(
-    () => students.filter((s) => String(s.grade) === gradeFilter),
-    [students, gradeFilter],
+    () => students.filter((s) => String(s.grade) === grade),
+    [students, grade],
   );
   const totalGradeStudents = gradeStudents.length;
   const studentsById = useMemo(
@@ -314,8 +353,8 @@ export default function ScheduleBoardPage({
     const session = sessions.find((s) => s.id === dragId);
     const day     = days.find((d) => d.id === dayId);
     const period  = periods.find((p) => p.id === periodId);
-    const startTime = period?.startTimes?.[gradeFilter] ?? "08:30";
-    onMove(dragId, { dayId, periodId, grade: gradeFilter, startTime, duration: session?.duration, dateLabel: day?.label ?? "" });
+    const startTime = period?.startTimes?.[grade] ?? "08:30";
+    onMove(dragId, { dayId, periodId, grade, startTime, duration: session?.duration, dateLabel: day?.label ?? "" });
     setManuallyPlacedIds((prev) => new Set([...prev, dragId]));
     setDragId(null);
     setDragOver(null);
@@ -337,8 +376,8 @@ export default function ScheduleBoardPage({
   function handleResetAutoPlaced() {
     const autoPlaced = gradeSessions.filter((s) => s.dayId && s.periodId && !manuallyPlacedIds.has(s.id));
     if (autoPlaced.length === 0) { alert("초기화할 자동 배치 세션이 없습니다."); return; }
-    const manualCount = gradeSessions.filter((s) => s.dayId && s.periodId && manuallyPlacedIds.has(s.id)).length;
-    if (!window.confirm(`자동 배치 ${autoPlaced.length}개를 초기화합니다.\n수동 배치 ${manualCount}개는 유지됩니다.`)) return;
+    const manualCnt = gradeSessions.filter((s) => s.dayId && s.periodId && manuallyPlacedIds.has(s.id)).length;
+    if (!window.confirm(`자동 배치 ${autoPlaced.length}개를 초기화합니다.\n수동 배치 ${manualCnt}개는 유지됩니다.`)) return;
     autoPlaced.forEach((s) => onSessionChange(s.id, { dayId: "", periodId: "", dateLabel: "미배치", startTime: "" }));
     setPreviews(null);
   }
@@ -350,24 +389,21 @@ export default function ScheduleBoardPage({
       const session = sessions.find((s) => s.id === sessionId);
       const day     = days.find((d) => d.id === dayId);
       const period  = periods.find((p) => p.id === periodId);
-      const startTime = period?.startTimes?.[gradeFilter] ?? "08:30";
-      onMove(sessionId, { dayId, periodId, grade: gradeFilter, startTime, duration: session?.duration, dateLabel: day?.label ?? "" });
+      const startTime = period?.startTimes?.[grade] ?? "08:30";
+      onMove(sessionId, { dayId, periodId, grade, startTime, duration: session?.duration, dateLabel: day?.label ?? "" });
     }
     setPreviews(null);
   }
 
-  // feature 3: 3가지 전략 미리보기 생성
   function handlePreview() {
     const options = Object.entries(STRATEGIES).map(([key, weights]) => {
-      // gradeSessions 전체 전달 → 기배치 세션도 conflict graph에 포함
       const result  = autoPlace(gradeSessions, days, periods, students, enrollments, weights);
-      const metrics = evaluatePlacement(result, sessions, studentSets, days, periods, gradeFilter);
+      const metrics = evaluatePlacement(result, sessions, studentSets, days, periods, grade);
       return { key, label: weights.label, desc: weights.desc, result, metrics };
     });
     setPreviews(options);
   }
 
-  // 요일 드래그: 두 날짜의 모든 세션 교체
   function handleDayDrop(targetDayId) {
     if (!dayDragId || dayDragId === targetDayId) { setDayDragId(null); setDayDragOver(null); return; }
     const srcDay = days.find((d) => d.id === dayDragId);
@@ -377,7 +413,6 @@ export default function ScheduleBoardPage({
     setDayDragOver(null);
   }
 
-  // feature 1: 요일 라벨 저장
   function saveDayLabel(dayId) {
     if (onDayChange && editingLabel.trim()) {
       onDayChange(dayId, { label: editingLabel.trim() });
@@ -386,69 +421,132 @@ export default function ScheduleBoardPage({
     setEditingLabel("");
   }
 
-  // 학년 탭 뱃지
-  function gradeTabInfo(g) {
-    const gs = sessions.filter((s) => String(s.grade) === g);
-    return { total: gs.length, placed: gs.filter((s) => s.dayId && s.periodId).length };
-  }
+  // 패널 상태 요약값
+  const confirmed   = scheduleConfirmed?.[grade] ?? false;
+  const total       = gradeSessions.length;
+  const placed      = gradeSessions.filter((s) => s.dayId && s.periodId).length;
+  const allPlaced   = total > 0 && placed === total;
+  const manualCount = gradeSessions.filter((s) => s.dayId && s.periodId && manuallyPlacedIds.has(s.id)).length;
 
-  if (!days.length || !periods.length) {
-    return (
-      <div style={s.page}>
-        <div style={s.emptyBoard}>
-          <span>고사 기간 또는 교시가 설정되지 않았습니다.</span>
-          <span style={{ fontSize: "0.8rem" }}>시험계획 탭에서 날짜와 교시를 먼저 설정해주세요.</span>
+  // ── 팔레트 렌더 (풀사이즈 or 미니) ─────────────────────────────────────────
+
+  function renderPalette(side) {
+    if (compact) {
+      return (
+        <div style={s.miniPal(side)}>
+          <div style={s.miniPalHdr}>
+            미배치
+            {unplaced.length > 0 && (
+              <><br /><span style={{ fontSize: "0.72rem", color: "#4f46e5", fontWeight: 800 }}>{unplaced.length}개</span></>
+            )}
+          </div>
+          <div style={s.miniPalBody} onDragOver={(e) => e.preventDefault()} onDrop={handleDropToPalette}>
+            {unplaced.length === 0 ? (
+              <div style={{ fontSize: "0.6rem", color: "#9ca3af", textAlign: "center", padding: "0.6rem 0" }}>완료</div>
+            ) : (
+              unplaced.map((session) => (
+                <div
+                  key={session.id}
+                  draggable
+                  title={`${session.subjectName} · ${session.duration}분 · ${session.studentCount ?? 0}명`}
+                  style={s.miniPalChip(dragId === session.id)}
+                  onDragStart={() => setDragId(session.id)}
+                  onDragEnd={() => setDragId(null)}
+                >
+                  {session.subjectName}
+                  <div style={s.miniPalMeta}>{session.duration}분·{session.studentCount ?? 0}명</div>
+                </div>
+              ))
+            )}
+          </div>
+          <div style={s.miniPalDrop}>{dragId ? "↩" : ""}</div>
         </div>
+      );
+    }
+
+    // 풀사이즈 팔레트 (단독 보기)
+    return (
+      <div style={s.palette}>
+        <div style={s.palHeader}>미배치 {unplaced.length > 0 ? `(${unplaced.length})` : ""}</div>
+        <div style={s.palBody} onDragOver={(e) => e.preventDefault()} onDrop={handleDropToPalette}>
+          {unplaced.length === 0 ? (
+            <div style={{ fontSize: "0.73rem", color: "#9ca3af", textAlign: "center", padding: "1rem 0" }}>모두 배치 완료</div>
+          ) : (
+            unplaced.map((session) => (
+              <SessionCard key={session.id} session={session} variant="palette"
+                isDragging={dragId === session.id}
+                onDragStart={() => setDragId(session.id)}
+                onDragEnd={() => setDragId(null)}
+              />
+            ))
+          )}
+        </div>
+        <div style={s.palDropZone}>{dragId ? "여기로 → 미배치 복귀" : ""}</div>
       </div>
     );
   }
 
-  const notReadyGrades = ["1", "2", "3"].filter((g) => examPlanReady && !examPlanReady[g]);
+  // ── 패널 헤더 렌더 ──────────────────────────────────────────────────────────
 
-  return (
-    <>
-    {notReadyGrades.length > 0 && (
-      <div style={{ padding: "0.55rem 1.5rem", backgroundColor: "#fff7ed", color: "#b45309", borderBottom: "1px solid #fed7aa", fontSize: "0.82rem", fontWeight: 600 }}>
-        ⚠ {notReadyGrades.join(", ")}학년 시험계획 과목 확정이 필요합니다. 시험계획 탭에서 과목 확정 후 배치하세요.
-      </div>
-    )}
-    <div style={s.page}>
-      {/* ── 상단 컨트롤 바 ── */}
-      <div style={s.topBar}>
-        <span style={s.pageTitle}>일정 배치</span>
-        <div style={{ display: "flex", gap: "0.3rem" }}>
-          {["1", "2", "3"].map((g) => {
-            const { total, placed } = gradeTabInfo(g);
-            const active = gradeFilter === g;
-            const confirmed = scheduleConfirmed?.[g] ?? false;
-            return (
-              <button key={g} style={active ? s.tabActive : s.tab}
-                onClick={() => { setGradeFilter(g); setDragId(null); setPreviews(null); }}
-              >
-                {g}학년{confirmed ? " ✓" : ""}<span style={active ? s.badgeBlue : s.badge}>{placed}/{total}</span>
-              </button>
-            );
-          })}
+  function renderPanelBar() {
+    if (compact) {
+      // 나란히 보기: 컴팩트 헤더
+      return (
+        <div style={s.panelBar}>
+          <span style={s.panelTitle}>{grade}학년</span>
+          <span style={confirmed ? s.sBadgeOk : allPlaced ? s.sBadgeInfo : s.sBadgeWarn}>
+            {confirmed ? "✓ 확정" : `${placed}/${total}`}
+          </span>
+          {total > 0 && (
+            confirmed
+              ? <button style={s.panelBtnOut} onClick={() => onDeconfirmSchedule?.(grade)}>확정 해제</button>
+              : <button style={s.panelBtnPri(!allPlaced)}
+                  onClick={() => allPlaced && onConfirmSchedule?.(grade)}
+                  disabled={!allPlaced}
+                >
+                  {allPlaced ? "배치 확정" : `${total - placed}개 미배치`}
+                </button>
+          )}
+          <div style={{ flex: 1 }} />
+          {manualCount > 0 && (
+            <span style={{ fontSize: "0.65rem", color: "#92400e", backgroundColor: "#fef3c7", border: "1px solid #fde68a", borderRadius: "5px", padding: "0.12rem 0.38rem", fontWeight: 600, flexShrink: 0 }}>
+              수동 {manualCount}
+            </span>
+          )}
+          <button style={s.panelBtnPri(unplaced.length === 0)} onClick={handlePreview} disabled={unplaced.length === 0}>
+            {unplaced.length === 0 ? "완료" : `${unplaced.length}개 자동`}
+          </button>
+          {previews && <button style={s.panelBtnOut} onClick={() => setPreviews(null)}>닫기</button>}
+          <button style={s.panelBtnDng} onClick={handleResetAutoPlaced} title="자동배치 초기화">자동↩</button>
+          <button style={s.panelBtnDng} title="전체 초기화"
+            onClick={() => {
+              if (!window.confirm(`${grade}학년 배치를 모두 초기화하시겠습니까?\n초기화 후 즉시 저장됩니다.`)) return;
+              onResetPlacements?.(grade);
+              setManuallyPlacedIds(new Set());
+              setPreviews(null);
+            }}>전체↩</button>
         </div>
-        <div style={s.sep} />
+      );
+    }
+
+    // 단독 보기: 풀사이즈 헤더 (기존 topBar 컨트롤 섹션과 동일한 역할)
+    return (
+      <div style={{ ...s.topBar, borderTop: "none", borderBottom: "1px solid #e5e7eb", backgroundColor: "#f9fafb" }}>
         {(() => {
-          const { total, placed } = gradeTabInfo(gradeFilter);
-          const confirmed = scheduleConfirmed?.[gradeFilter] ?? false;
-          const allPlaced = total > 0 && placed === total;
           return (
             <>
               {confirmed
-                ? <span style={s.sBadgeOk}>✓ {gradeFilter}학년 확정됨</span>
+                ? <span style={s.sBadgeOk}>✓ {grade}학년 확정됨</span>
                 : allPlaced
                 ? <span style={s.sBadgeInfo}>배치 완료 — 확정해주세요</span>
                 : <span style={s.sBadgeWarn}>{placed}/{total} 배치됨</span>
               }
               {total > 0 && (
                 confirmed
-                  ? <button style={s.outlineBtn} onClick={() => onDeconfirmSchedule?.(gradeFilter)}>확정 해제</button>
+                  ? <button style={s.outlineBtn} onClick={() => onDeconfirmSchedule?.(grade)}>확정 해제</button>
                   : <button
                       style={{ ...s.primaryBtn, ...(allPlaced ? {} : { opacity: 0.5, cursor: "not-allowed" }) }}
-                      onClick={() => allPlaced && onConfirmSchedule?.(gradeFilter)}
+                      onClick={() => allPlaced && onConfirmSchedule?.(grade)}
                       disabled={!allPlaced}
                     >
                       {allPlaced ? "배치 확정" : `미배치 ${total - placed}개`}
@@ -458,31 +556,24 @@ export default function ScheduleBoardPage({
           );
         })()}
         <div style={s.sep} />
-        {(() => {
-          const manualCount = gradeSessions.filter(s => s.dayId && s.periodId && manuallyPlacedIds.has(s.id)).length;
-          return (
-            <>
-              {manualCount > 0 && (
-                <span style={{ fontSize: "0.75rem", color: "#92400e", backgroundColor: "#fef3c7", border: "1px solid #fde68a", borderRadius: "6px", padding: "0.2rem 0.55rem", fontWeight: 600, flexShrink: 0 }}>
-                  수동 {manualCount}개 유지
-                </span>
-              )}
-              <button style={s.primaryBtn} onClick={handlePreview} disabled={unplaced.length === 0}>
-                {unplaced.length === 0 ? "모두 배치됨" : `나머지 ${unplaced.length}개 자동 배치`}
-              </button>
-              {previews && (
-                <button style={s.outlineBtn} onClick={() => setPreviews(null)}>미리보기 닫기</button>
-              )}
-            </>
-          );
-        })()}
+        {manualCount > 0 && (
+          <span style={{ fontSize: "0.75rem", color: "#92400e", backgroundColor: "#fef3c7", border: "1px solid #fde68a", borderRadius: "6px", padding: "0.2rem 0.55rem", fontWeight: 600, flexShrink: 0 }}>
+            수동 {manualCount}개 유지
+          </span>
+        )}
+        <button style={s.primaryBtn} onClick={handlePreview} disabled={unplaced.length === 0}>
+          {unplaced.length === 0 ? "모두 배치됨" : `나머지 ${unplaced.length}개 자동 배치`}
+        </button>
+        {previews && (
+          <button style={s.outlineBtn} onClick={() => setPreviews(null)}>미리보기 닫기</button>
+        )}
         <button style={s.dangerBtn} onClick={handleResetAutoPlaced}>
           자동배치 초기화
         </button>
         <button style={s.dangerBtn}
           onClick={() => {
-            if (!window.confirm(`${gradeFilter}학년 배치를 모두 초기화하시겠습니까?\n초기화 후 즉시 저장됩니다.`)) return;
-            onResetPlacements?.(gradeFilter);
+            if (!window.confirm(`${grade}학년 배치를 모두 초기화하시겠습니까?\n초기화 후 즉시 저장됩니다.`)) return;
+            onResetPlacements?.(grade);
             setManuallyPlacedIds(new Set());
             setPreviews(null);
           }}
@@ -490,40 +581,34 @@ export default function ScheduleBoardPage({
           전체 초기화
         </button>
       </div>
+    );
+  }
 
-      {/* ── 메인 레이아웃 ── */}
+  // ── 렌더 ───────────────────────────────────────────────────────────────────
+
+  return (
+    <>
+      {/* 패널 헤더 (단독/나란히 공통) */}
+      {renderPanelBar()}
+
+      {/* 팔레트 + 보드 */}
       <div style={s.body}>
-        {/* ── 팔레트 ── */}
-        <div style={s.palette}>
-          <div style={s.palHeader}>미배치 {unplaced.length > 0 ? `(${unplaced.length})` : ""}</div>
-          <div style={s.palBody} onDragOver={(e) => e.preventDefault()} onDrop={handleDropToPalette}>
-            {unplaced.length === 0 ? (
-              <div style={{ fontSize: "0.73rem", color: "#9ca3af", textAlign: "center", padding: "1rem 0" }}>모두 배치 완료</div>
-            ) : (
-              unplaced.map((session) => (
-                <SessionCard key={session.id} session={session} variant="palette"
-                  isDragging={dragId === session.id}
-                  onDragStart={() => setDragId(session.id)}
-                  onDragEnd={() => setDragId(null)}
-                />
-              ))
-            )}
-          </div>
-          <div style={s.palDropZone}>{dragId ? "여기로 → 미배치 복귀" : ""}</div>
-        </div>
 
-        {/* ── 보드 영역 ── */}
+        {/* 팔레트 — 왼쪽 */}
+        {palettePos === "left" && renderPalette("left")}
+
+        {/* 보드 영역 */}
         <div style={s.boardWrap}>
           {/* 그리드 */}
           <div style={s.grid(days.length)}>
             {/* 헤더 행 */}
             <div style={s.cornerCell} />
             {days.map((day) => {
-              const dStats      = dayStatsMap[day.id];
-              const dayEmpty    = !gradeSessions.some((s) => s.dayId === day.id);
-              const isEditing   = editingDayId === day.id;
+              const dStats        = dayStatsMap[day.id];
+              const dayEmpty      = !gradeSessions.some((s) => s.dayId === day.id);
+              const isEditing     = editingDayId === day.id;
               const isDayDragging = dayDragId === day.id;
-              const isDayOver   = dayDragOver === day.id && dayDragId && dayDragId !== day.id;
+              const isDayOver     = dayDragOver === day.id && dayDragId && dayDragId !== day.id;
 
               return (
                 <div
@@ -579,15 +664,14 @@ export default function ScheduleBoardPage({
               <>
                 <div key={`lbl-${period.id}`} style={s.periodLabel}>{period.label}</div>
                 {days.map((day) => {
-                  const slotKey      = `${day.id}__${period.id}`;
-                  const isOver       = dragOver === slotKey;
-                  const valid        = canDrop(day.id, period.id);
-                  const cellSessions = gradeSessions.filter((s) => s.dayId === day.id && s.periodId === period.id);
-                  const dStats       = dayStatsMap[day.id];
-                  const pStat        = dStats?.periodStats?.[period.id];
+                  const slotKey         = `${day.id}__${period.id}`;
+                  const isOver          = dragOver === slotKey;
+                  const valid           = canDrop(day.id, period.id);
+                  const cellSessions    = gradeSessions.filter((s) => s.dayId === day.id && s.periodId === period.id);
+                  const dStats          = dayStatsMap[day.id];
+                  const pStat           = dStats?.periodStats?.[period.id];
                   const conflictsInSlot = dStats?.conflicts ?? new Set();
-                  const crossGrades  = getSameDayOtherGradeSessions(sessions, day.id, gradeFilter);
-                  const confirmed    = scheduleConfirmed?.[gradeFilter] ?? false;
+                  const crossGrades     = getSameDayOtherGradeSessions(sessions, day.id, grade);
 
                   return (
                     <div key={slotKey} style={s.cell(isOver, valid)}
@@ -632,7 +716,7 @@ export default function ScheduleBoardPage({
               </>
             ))}
 
-            {/* feature 2: 당일 시험 없는 학생 수 요약 행 */}
+            {/* 당일 시험 없는 학생 수 요약 행 */}
             <div style={s.summaryCorner}>
               <span style={{ fontSize: "0.62rem", color: "#9ca3af", textAlign: "center", lineHeight: 1.3 }}>시험<br/>없음</span>
             </div>
@@ -658,7 +742,7 @@ export default function ScheduleBoardPage({
             })}
           </div>
 
-          {/* feature 3: 자동 배치 미리보기 패널 */}
+          {/* 자동 배치 미리보기 패널 */}
           {previews && (
             <div style={s.previewPanel}>
               <div style={s.previewTitle}>
@@ -702,107 +786,223 @@ export default function ScheduleBoardPage({
               </div>
             </div>
           )}
-        {/* ── 선택과목 수강생 교차 행렬 ── */}
-        {electiveSessions.length >= 2 && (
-          <div style={s.matrixSection}>
-            <div style={s.matrixHeader}>
-              <span>선택과목 수강생 교차 현황</span>
-              <button style={{ ...s.outlineBtn, padding: "0.18rem 0.6rem", fontSize: "0.72rem" }}
-                onClick={() => setMatrixOpen((o) => !o)}>
-                {matrixOpen ? "▲ 접기" : "▼ 펼치기"}
-              </button>
-            </div>
-            {matrixOpen && (
-              <div style={{ display: "flex", gap: "1.5rem", alignItems: "flex-start" }}>
-                {/* 표 */}
-                <div style={{ ...s.matrixWrap, flex: 1, minWidth: 0 }}>
-                  <table style={s.matrixTable}>
-                    <thead>
-                      <tr>
-                        <th style={{ ...s.matrixRowHead, minWidth: "90px" }} />
-                        {electiveSessions.map((sess) => (
-                          <th key={sess.id} style={s.matrixColHead}>
-                            {sess.subjectName}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {electiveSessions.map((rowSess, ri) => (
-                        <tr key={rowSess.id}>
-                          <td style={s.matrixRowHead} title={rowSess.subjectName}>
-                            {rowSess.subjectName}
-                          </td>
-                          {conflictMatrix[ri].map((val, ci) => {
-                            const bg = heatColor(val, maxOverlap);
-                            return (
-                              <td key={electiveSessions[ci].id}
-                                style={s.matrixCell(bg, val > 0)}
-                                title={val >= 0 ? `${rowSess.subjectName} ∩ ${electiveSessions[ci].subjectName}: ${val}명` : ""}>
-                                {val < 0 ? "—" : val}
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
 
-                {/* 오른쪽 설명 */}
-                <div style={{ flexShrink: 0, width: "220px", fontSize: "0.75rem", color: "#374151", lineHeight: 1.6, backgroundColor: "#fff", border: "1px solid #e5e7eb", borderRadius: "8px", padding: "0.75rem 0.9rem" }}>
-                  <p style={{ fontWeight: 700, marginBottom: "0.5rem", color: "#111827" }}>숫자의 의미</p>
-                  <div style={{ display: "flex", gap: "0.4rem", marginBottom: "0.5rem" }}>
-                    <span style={{ display: "inline-block", width: "14px", height: "14px", backgroundColor: "#dbeafe", border: "1px solid #bfdbfe", borderRadius: "3px", flexShrink: 0, marginTop: "2px" }} />
-                    <p style={{ margin: 0, color: "#1d4ed8", fontWeight: 600 }}>0 — 두 과목을 동시에 시험봐도 됩니다.</p>
-                  </div>
-                  <div style={{ display: "flex", gap: "0.4rem", marginBottom: "0.5rem" }}>
-                    <span style={{ display: "inline-block", width: "14px", height: "14px", backgroundColor: "#fecaca", border: "1px solid #fca5a5", borderRadius: "3px", flexShrink: 0, marginTop: "2px" }} />
-                    <p style={{ margin: 0, color: "#dc2626", fontWeight: 600 }}>숫자가 클수록 — 두 과목을 모두 선택한 학생이 많으므로 같은 날 시험은 피해야 합니다.</p>
-                  </div>
-                  <div style={{ display: "flex", gap: "0.4rem" }}>
-                    <span style={{ display: "inline-block", width: "14px", height: "14px", background: "linear-gradient(135deg, #dbeafe 50%, #fecaca 50%)", border: "1px solid #e5e7eb", borderRadius: "3px", flexShrink: 0, marginTop: "2px" }} />
-                    <p style={{ margin: 0, color: "#6b7280" }}>숫자가 작을수록 — 두 과목을 모두 선택한 학생이 적으므로 같은 날 시험을 권장합니다.</p>
-                  </div>
-                  <p style={{ marginTop: "0.6rem", marginBottom: 0, color: "#9ca3af", fontSize: "0.68rem" }}>이 학년 최대 중복: {maxOverlap}명</p>
-                </div>
+          {/* 선택과목 수강생 교차 행렬 */}
+          {electiveSessions.length >= 2 && (
+            <div style={s.matrixSection}>
+              <div style={s.matrixHeader}>
+                <span>선택과목 수강생 교차 현황</span>
+                <button style={{ ...s.outlineBtn, padding: "0.18rem 0.6rem", fontSize: "0.72rem" }}
+                  onClick={() => setMatrixOpen((o) => !o)}>
+                  {matrixOpen ? "▲ 접기" : "▼ 펼치기"}
+                </button>
               </div>
-            )}
-          </div>
-        )}
-        </div>
-      </div>
-    </div>
-
-    {/* ── 학생 명단 모달 ── */}
-    {modal && (() => {
-      const sorted = modal.studentIds
-        .map((id) => studentsById[id])
-        .filter(Boolean)
-        .sort((a, b) => Number(a.classNo) - Number(b.classNo) || Number(a.number) - Number(b.number));
-      return (
-        <div style={s.modalOverlay} onClick={() => setModal(null)}>
-          <div style={s.modalBox} onClick={(e) => e.stopPropagation()}>
-            <div style={s.modalHeader}>
-              <span style={s.modalTitle}>{modal.title}</span>
-              <button style={s.modalClose} onClick={() => setModal(null)}>✕</button>
-            </div>
-            <div style={s.modalCount}>{sorted.length}명</div>
-            <div style={s.modalBody}>
-              {sorted.length === 0 ? (
-                <div style={s.modalEmpty}>해당 학생 없음</div>
-              ) : (
-                sorted.map((st) => (
-                  <div key={st.id} style={s.modalRow}>
-                    {st.classNo}반 {st.number}번&nbsp;&nbsp;{st.name}
+              {matrixOpen && (
+                <div style={{ display: "flex", gap: "1.5rem", alignItems: "flex-start" }}>
+                  <div style={{ ...s.matrixWrap, flex: 1, minWidth: 0 }}>
+                    <table style={s.matrixTable}>
+                      <thead>
+                        <tr>
+                          <th style={{ ...s.matrixRowHead, minWidth: "90px" }} />
+                          {electiveSessions.map((sess) => (
+                            <th key={sess.id} style={s.matrixColHead}>{sess.subjectName}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {electiveSessions.map((rowSess, ri) => (
+                          <tr key={rowSess.id}>
+                            <td style={s.matrixRowHead} title={rowSess.subjectName}>{rowSess.subjectName}</td>
+                            {conflictMatrix[ri].map((val, ci) => {
+                              const bg = heatColor(val, maxOverlap);
+                              return (
+                                <td key={electiveSessions[ci].id}
+                                  style={s.matrixCell(bg, val > 0)}
+                                  title={val >= 0 ? `${rowSess.subjectName} ∩ ${electiveSessions[ci].subjectName}: ${val}명` : ""}>
+                                  {val < 0 ? "—" : val}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                ))
+                  <div style={{ flexShrink: 0, width: "220px", fontSize: "0.75rem", color: "#374151", lineHeight: 1.6, backgroundColor: "#fff", border: "1px solid #e5e7eb", borderRadius: "8px", padding: "0.75rem 0.9rem" }}>
+                    <p style={{ fontWeight: 700, marginBottom: "0.5rem", color: "#111827" }}>숫자의 의미</p>
+                    <div style={{ display: "flex", gap: "0.4rem", marginBottom: "0.5rem" }}>
+                      <span style={{ display: "inline-block", width: "14px", height: "14px", backgroundColor: "#dbeafe", border: "1px solid #bfdbfe", borderRadius: "3px", flexShrink: 0, marginTop: "2px" }} />
+                      <p style={{ margin: 0, color: "#1d4ed8", fontWeight: 600 }}>0 — 두 과목을 동시에 시험봐도 됩니다.</p>
+                    </div>
+                    <div style={{ display: "flex", gap: "0.4rem", marginBottom: "0.5rem" }}>
+                      <span style={{ display: "inline-block", width: "14px", height: "14px", backgroundColor: "#fecaca", border: "1px solid #fca5a5", borderRadius: "3px", flexShrink: 0, marginTop: "2px" }} />
+                      <p style={{ margin: 0, color: "#dc2626", fontWeight: 600 }}>숫자가 클수록 — 두 과목을 모두 선택한 학생이 많으므로 같은 날 시험은 피해야 합니다.</p>
+                    </div>
+                    <div style={{ display: "flex", gap: "0.4rem" }}>
+                      <span style={{ display: "inline-block", width: "14px", height: "14px", background: "linear-gradient(135deg, #dbeafe 50%, #fecaca 50%)", border: "1px solid #e5e7eb", borderRadius: "3px", flexShrink: 0, marginTop: "2px" }} />
+                      <p style={{ margin: 0, color: "#6b7280" }}>숫자가 작을수록 — 두 과목을 모두 선택한 학생이 적으므로 같은 날 시험을 권장합니다.</p>
+                    </div>
+                    <p style={{ marginTop: "0.6rem", marginBottom: 0, color: "#9ca3af", fontSize: "0.68rem" }}>이 학년 최대 중복: {maxOverlap}명</p>
+                  </div>
+                </div>
               )}
             </div>
-          </div>
+          )}
         </div>
-      );
-    })()}
+
+        {/* 팔레트 — 오른쪽 */}
+        {palettePos === "right" && renderPalette("right")}
+      </div>
+
+      {/* 학생 명단 모달 */}
+      {modal && (() => {
+        const sorted = modal.studentIds
+          .map((id) => studentsById[id])
+          .filter(Boolean)
+          .sort((a, b) => Number(a.classNo) - Number(b.classNo) || Number(a.number) - Number(b.number));
+        return (
+          <div style={s.modalOverlay} onClick={() => setModal(null)}>
+            <div style={s.modalBox} onClick={(e) => e.stopPropagation()}>
+              <div style={s.modalHeader}>
+                <span style={s.modalTitle}>{modal.title}</span>
+                <button style={s.modalClose} onClick={() => setModal(null)}>✕</button>
+              </div>
+              <div style={s.modalCount}>{sorted.length}명</div>
+              <div style={s.modalBody}>
+                {sorted.length === 0 ? (
+                  <div style={s.modalEmpty}>해당 학생 없음</div>
+                ) : (
+                  sorted.map((st) => (
+                    <div key={st.id} style={s.modalRow}>
+                      {st.classNo}반 {st.number}번&nbsp;&nbsp;{st.name}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+    </>
+  );
+}
+
+// ── 메인 컴포넌트 ─────────────────────────────────────────────────────────────
+
+export default function ScheduleBoardPage({
+  days, periods, sessions, students, enrollments,
+  examPlanReady,
+  onMove, onSessionChange, onDayChange, onSwapDays, onResetPlacements,
+  scheduleConfirmed, onConfirmSchedule, onDeconfirmSchedule,
+}) {
+  const [dualMode, setDualMode]       = useState(false);
+  const [gradeFilter, setGradeFilter] = useState("1");
+  const [dualGrades, setDualGrades]   = useState(["2", "3"]);
+
+  function gradeTabInfo(g) {
+    const gs = sessions.filter((s) => String(s.grade) === g);
+    return { total: gs.length, placed: gs.filter((s) => s.dayId && s.periodId).length };
+  }
+
+  if (!days.length || !periods.length) {
+    return (
+      <div style={s.page}>
+        <div style={s.emptyBoard}>
+          <span>고사 기간 또는 교시가 설정되지 않았습니다.</span>
+          <span style={{ fontSize: "0.8rem" }}>시험계획 탭에서 날짜와 교시를 먼저 설정해주세요.</span>
+        </div>
+      </div>
+    );
+  }
+
+  const notReadyGrades = ["1", "2", "3"].filter((g) => examPlanReady && !examPlanReady[g]);
+  const DUAL_PAIRS = [["2", "3"], ["1", "2"], ["1", "3"]];
+  const sharedProps = {
+    days, periods, sessions, students, enrollments,
+    examPlanReady, scheduleConfirmed,
+    onMove, onSessionChange, onDayChange, onSwapDays, onResetPlacements,
+    onConfirmSchedule, onDeconfirmSchedule,
+  };
+
+  return (
+    <>
+      {notReadyGrades.length > 0 && (
+        <div style={{ padding: "0.55rem 1.5rem", backgroundColor: "#fff7ed", color: "#b45309", borderBottom: "1px solid #fed7aa", fontSize: "0.82rem", fontWeight: 600 }}>
+          ⚠ {notReadyGrades.join(", ")}학년 시험계획 과목 확정이 필요합니다. 시험계획 탭에서 과목 확정 후 배치하세요.
+        </div>
+      )}
+      <div style={s.page}>
+        {/* ── 상단 컨트롤 바 ── */}
+        <div style={s.topBar}>
+          <span style={s.pageTitle}>일정 배치</span>
+          {!dualMode ? (
+            <>
+              <div style={{ display: "flex", gap: "0.3rem" }}>
+                {["1", "2", "3"].map((g) => {
+                  const { total, placed } = gradeTabInfo(g);
+                  const active    = gradeFilter === g;
+                  const confirmed = scheduleConfirmed?.[g] ?? false;
+                  return (
+                    <button key={g} style={active ? s.tabActive : s.tab}
+                      onClick={() => setGradeFilter(g)}>
+                      {g}학년{confirmed ? " ✓" : ""}
+                      <span style={active ? s.badgeBlue : s.badge}>{placed}/{total}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={s.sep} />
+              <button style={s.outlineBtn} onClick={() => setDualMode(true)}>
+                나란히 보기
+              </button>
+            </>
+          ) : (
+            <>
+              <div style={{ display: "flex", gap: "0.3rem" }}>
+                {DUAL_PAIRS.map(([a, b]) => {
+                  const active = dualGrades[0] === a && dualGrades[1] === b;
+                  return (
+                    <button key={`${a}${b}`} style={active ? s.tabActive : s.tab}
+                      onClick={() => setDualGrades([a, b])}>
+                      {a}+{b}학년
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={s.sep} />
+              <button style={s.outlineBtn} onClick={() => setDualMode(false)}>← 단독 보기</button>
+            </>
+          )}
+        </div>
+
+        {/* ── 메인 레이아웃 ── */}
+        {dualMode ? (
+          <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+            {/* fragment 자식들이 flex row에 분산되지 않도록 column div로 감쌈 */}
+            <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden", minWidth: 0 }}>
+              <GradeBoardPanel
+                key={dualGrades[0]}
+                grade={dualGrades[0]} palettePos="left" compact={true}
+                {...sharedProps}
+              />
+            </div>
+            <div style={s.panelDivider} />
+            <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden", minWidth: 0 }}>
+              <GradeBoardPanel
+                key={dualGrades[1]}
+                grade={dualGrades[1]} palettePos="right" compact={true}
+                {...sharedProps}
+              />
+            </div>
+          </div>
+        ) : (
+          <GradeBoardPanel
+            key={gradeFilter}
+            grade={gradeFilter} palettePos="left" compact={false}
+            {...sharedProps}
+          />
+        )}
+      </div>
     </>
   );
 }
