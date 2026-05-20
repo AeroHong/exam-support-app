@@ -9,6 +9,7 @@ import {
   doc,
   serverTimestamp,
   writeBatch,
+  updateDoc,
 } from "firebase/firestore";
 import { firebaseDb } from "../lib/firebase";
 
@@ -39,6 +40,10 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
   const [newSchool, setNewSchool] = useState(EMPTY_SCHOOL);
   const [schoolSaving, setSchoolSaving] = useState(false);
   const [schoolSaveMsg, setSchoolSaveMsg] = useState("");
+  const [users, setUsers] = useState([]);
+  const [expandedSchool, setExpandedSchool] = useState(null);
+  const [editingSchoolName, setEditingSchoolName] = useState(null); // { id, name }
+  const [schoolNameSaving, setSchoolNameSaving] = useState(false);
 
   // ─── 도메인 등록 상태 ────────────────────────────────────────────────────
   const [domains, setDomains] = useState([]);
@@ -58,7 +63,7 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
 
   // ─── 데이터 로딩 ─────────────────────────────────────────────────────────
   useEffect(() => {
-    if (activeTab === "schools") loadSchools();
+    if (activeTab === "schools") { loadSchools(); loadUsers(); }
     if (activeTab === "domains") loadDomains();
     if (activeTab === "emails") loadEmails();
   }, [activeTab]);
@@ -74,6 +79,33 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
       setSchoolsError("학교 목록을 불러오지 못했습니다: " + err.message);
     } finally {
       setSchoolsLoading(false);
+    }
+  }
+
+  async function loadUsers() {
+    if (!firebaseDb) return;
+    try {
+      const snap = await getDocs(collection(firebaseDb, "users"));
+      setUsers(snap.docs.map((d) => ({ uid: d.id, ...d.data() })));
+    } catch {
+      // 유저 로드 실패는 무시 (학교 목록은 표시)
+    }
+  }
+
+  async function handleSaveSchoolName(schoolId, newName) {
+    if (!newName.trim() || !firebaseDb) return;
+    setSchoolNameSaving(true);
+    try {
+      const batch = writeBatch(firebaseDb);
+      batch.update(doc(firebaseDb, "schools", schoolId), { name: newName.trim() });
+      batch.update(doc(firebaseDb, "schoolIndex", schoolId), { name: newName.trim() });
+      await batch.commit();
+      setSchools((prev) => prev.map((s) => s.id === schoolId ? { ...s, name: newName.trim() } : s));
+      setEditingSchoolName(null);
+    } catch (err) {
+      setSchoolsError("학교명 변경 실패: " + err.message);
+    } finally {
+      setSchoolNameSaving(false);
     }
   }
 
@@ -321,9 +353,9 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
                 <table className="input-table">
                   <thead>
                     <tr>
-                      {[["id","학교 ID"],["name","학교명"],["isGuest","구분"],["ownerEmail","소유자 이메일"],["createdAt","등록일"]].map(([key, label]) => (
-                        <th key={key} style={schoolSort.thSort} onClick={() => schoolSort.toggle(key)}>
-                          {label}{schoolSort.Ind(key)}
+                      {[["id","학교 ID"],["name","학교명"],["isGuest","구분"],["ownerEmail","소유자 이메일"],["users","소속 유저"],["createdAt","등록일"]].map(([key, label]) => (
+                        <th key={key} style={key !== "users" ? schoolSort.thSort : undefined} onClick={key !== "users" ? () => schoolSort.toggle(key) : undefined}>
+                          {label}{key !== "users" && schoolSort.Ind(key)}
                         </th>
                       ))}
                       <th></th>
@@ -336,38 +368,104 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
                       isGuest:    (s) => s.isGuest ? "Guest" : "정식",
                       ownerEmail: (s) => s.ownerEmail || "",
                       createdAt:  (s) => s.createdAt?.toDate?.()?.getTime() ?? 0,
-                    }).map((school) => (
-                      <tr key={school.id}>
-                        <td className="font-mono text-xs">{school.id}</td>
-                        <td>{school.name}</td>
-                        <td>
-                          <span
-                            className={`card-badge ${
-                              school.isGuest ? "badge-essay" : "badge-safe"
-                            }`}
-                          >
-                            {school.isGuest ? "Guest" : "정식"}
-                          </span>
-                        </td>
-                        <td className="text-sm text-slate-500">
-                          {school.ownerEmail || "—"}
-                        </td>
-                        <td className="text-sm text-slate-400">
-                          {school.createdAt?.toDate
-                            ? school.createdAt.toDate().toLocaleDateString("ko-KR")
-                            : "—"}
-                        </td>
-                        <td>
-                          <button
-                            type="button"
-                            className="chip danger-button text-xs"
-                            onClick={() => handleDeleteSchool(school.id)}
-                          >
-                            삭제
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    }).map((school) => {
+                      const schoolUsers = users.filter((u) => u.schoolId === school.id);
+                      const isExpanded = expandedSchool === school.id;
+                      const isEditing = editingSchoolName?.id === school.id;
+                      return (
+                        <>
+                          <tr key={school.id}>
+                            <td className="font-mono text-xs">{school.id}</td>
+                            <td>
+                              {isEditing ? (
+                                <span style={{ display: "flex", gap: "0.3rem", alignItems: "center" }}>
+                                  <input
+                                    className={inputCls}
+                                    style={{ width: "160px", padding: "0.2rem 0.5rem" }}
+                                    value={editingSchoolName.name}
+                                    onChange={(e) => setEditingSchoolName((p) => ({ ...p, name: e.target.value }))}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") handleSaveSchoolName(school.id, editingSchoolName.name);
+                                      if (e.key === "Escape") setEditingSchoolName(null);
+                                    }}
+                                    autoFocus
+                                  />
+                                  <button type="button" className="primary-button text-xs" style={{ padding: "0.2rem 0.5rem" }} disabled={schoolNameSaving} onClick={() => handleSaveSchoolName(school.id, editingSchoolName.name)}>저장</button>
+                                  <button type="button" className="secondary-button text-xs" style={{ padding: "0.2rem 0.5rem" }} onClick={() => setEditingSchoolName(null)}>취소</button>
+                                </span>
+                              ) : (
+                                <span style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
+                                  {school.name}
+                                  <button type="button" className="chip text-xs" style={{ padding: "0.1rem 0.4rem", fontSize: "0.7rem" }} onClick={() => setEditingSchoolName({ id: school.id, name: school.name })}>✏️</button>
+                                </span>
+                              )}
+                            </td>
+                            <td>
+                              <span className={`card-badge ${school.isGuest ? "badge-essay" : "badge-safe"}`}>
+                                {school.isGuest ? "Guest" : "정식"}
+                              </span>
+                            </td>
+                            <td className="text-sm text-slate-500">{school.ownerEmail || "—"}</td>
+                            <td>
+                              <button
+                                type="button"
+                                className={`chip text-xs ${isExpanded ? "chip-active" : ""}`}
+                                onClick={() => setExpandedSchool(isExpanded ? null : school.id)}
+                              >
+                                👥 {schoolUsers.length}명 {isExpanded ? "▴" : "▾"}
+                              </button>
+                            </td>
+                            <td className="text-sm text-slate-400">
+                              {school.createdAt?.toDate ? school.createdAt.toDate().toLocaleDateString("ko-KR") : "—"}
+                            </td>
+                            <td>
+                              <span style={{ display: "flex", gap: "0.3rem", flexWrap: "nowrap" }}>
+                                <button
+                                  type="button"
+                                  className="chip text-xs"
+                                  style={{ whiteSpace: "nowrap" }}
+                                  onClick={() => {
+                                    setActiveTab("domains");
+                                    setNewDomain({ domain: "", schoolId: school.id, schoolName: school.name });
+                                  }}
+                                >
+                                  도메인 등록 →
+                                </button>
+                                <button type="button" className="chip danger-button text-xs" onClick={() => handleDeleteSchool(school.id)}>삭제</button>
+                              </span>
+                            </td>
+                          </tr>
+                          {isExpanded && (
+                            <tr key={`${school.id}-users`} style={{ backgroundColor: "#f8fafc" }}>
+                              <td colSpan={7} style={{ padding: "0.75rem 1rem" }}>
+                                {schoolUsers.length === 0 ? (
+                                  <span className="text-xs text-slate-400">소속 유저 없음</span>
+                                ) : (
+                                  <table style={{ width: "100%", fontSize: "0.78rem", borderCollapse: "collapse" }}>
+                                    <thead>
+                                      <tr style={{ color: "#6b7280", borderBottom: "1px solid #e5e7eb" }}>
+                                        <th style={{ textAlign: "left", padding: "0.2rem 0.5rem", fontWeight: 600 }}>이메일</th>
+                                        <th style={{ textAlign: "left", padding: "0.2rem 0.5rem", fontWeight: 600 }}>이름</th>
+                                        <th style={{ textAlign: "left", padding: "0.2rem 0.5rem", fontWeight: 600 }}>역할</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {schoolUsers.map((u) => (
+                                        <tr key={u.uid} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                                          <td style={{ padding: "0.2rem 0.5rem", color: "#374151" }}>{u.email || "—"}</td>
+                                          <td style={{ padding: "0.2rem 0.5rem", color: "#374151" }}>{u.displayName || "—"}</td>
+                                          <td style={{ padding: "0.2rem 0.5rem", color: "#6b7280" }}>{u.role || "—"}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                )}
+                              </td>
+                            </tr>
+                          )}
+                        </>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
