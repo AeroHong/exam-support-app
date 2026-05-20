@@ -9,6 +9,7 @@ import {
   doc,
   serverTimestamp,
   writeBatch,
+  updateDoc,
 } from "firebase/firestore";
 import { firebaseDb } from "../lib/firebase";
 
@@ -109,6 +110,9 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
   const [expandedSchool, setExpandedSchool] = useState(null);
   const [editingSchoolName, setEditingSchoolName] = useState(null); // { id, name }
   const [schoolNameSaving, setSchoolNameSaving] = useState(false);
+  const [reassigningUser, setReassigningUser] = useState(null); // { uid, selectedSchoolId }
+  const [reassignSaving, setReassignSaving] = useState(false);
+  const [reassignError, setReassignError] = useState("");
 
   // ── 도메인 등록 ────────────────────────────────────────────────────────────
   const [domains, setDomains] = useState([]);
@@ -232,6 +236,28 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
       setSchoolsError("학교명 변경 실패: " + err.message);
     } finally {
       setSchoolNameSaving(false);
+    }
+  }
+
+  async function handleReassignUser() {
+    if (!reassigningUser || !firebaseDb) return;
+    const { uid, selectedSchoolId } = reassigningUser;
+    const school = schools.find((sc) => sc.id === selectedSchoolId);
+    if (!school) return;
+    setReassignSaving(true); setReassignError("");
+    try {
+      await updateDoc(doc(firebaseDb, "users", uid), {
+        schoolId: school.id,
+        schoolName: school.name,
+      });
+      setUsers((prev) => prev.map((u) =>
+        u.uid === uid ? { ...u, schoolId: school.id, schoolName: school.name } : u
+      ));
+      setReassigningUser(null);
+    } catch (err) {
+      setReassignError("변경 실패: " + err.message);
+    } finally {
+      setReassignSaving(false);
     }
   }
 
@@ -455,16 +481,47 @@ function SuperAdminPage({ onLogout, onEnterDemoSchool }) {
                                           <th style={s.subTh}>이메일</th>
                                           <th style={s.subTh}>이름</th>
                                           <th style={s.subTh}>역할</th>
+                                          <th style={s.subTh}></th>
                                         </tr>
                                       </thead>
                                       <tbody>
-                                        {schoolUsers.map((u) => (
-                                          <tr key={u.uid}>
-                                            <td style={s.subTd}>{u.email || "—"}</td>
-                                            <td style={s.subTd}>{u.displayName || "—"}</td>
-                                            <td style={s.subTd}>{u.role || "—"}</td>
-                                          </tr>
-                                        ))}
+                                        {schoolUsers.map((u) => {
+                                          const isReassigning = reassigningUser?.uid === u.uid;
+                                          return (
+                                            <tr key={u.uid}>
+                                              <td style={s.subTd}>{u.email || "—"}</td>
+                                              <td style={s.subTd}>{u.displayName || "—"}</td>
+                                              <td style={s.subTd}>{u.role || "—"}</td>
+                                              <td style={{ ...s.subTd, whiteSpace: "nowrap" }}>
+                                                {isReassigning ? (
+                                                  <span style={{ display: "flex", gap: "0.3rem", alignItems: "center", flexWrap: "wrap" }}>
+                                                    <select
+                                                      style={{ padding: "0.2rem 0.4rem", border: "1px solid #d1d5db", borderRadius: "5px", fontSize: "0.75rem" }}
+                                                      value={reassigningUser.selectedSchoolId}
+                                                      onChange={(e) => setReassigningUser((p) => ({ ...p, selectedSchoolId: e.target.value }))}
+                                                    >
+                                                      {schools.map((sc) => (
+                                                        <option key={sc.id} value={sc.id}>{sc.name} ({sc.id})</option>
+                                                      ))}
+                                                    </select>
+                                                    <button style={{ ...s.smBtn, backgroundColor: "#4f46e5", color: "#fff" }} disabled={reassignSaving} onClick={handleReassignUser}>
+                                                      {reassignSaving ? "…" : "저장"}
+                                                    </button>
+                                                    <button style={{ ...s.smBtn, backgroundColor: "#f3f4f6", color: "#374151" }} onClick={() => { setReassigningUser(null); setReassignError(""); }}>취소</button>
+                                                    {reassignError && <span style={{ color: "#dc2626", fontSize: "0.72rem" }}>{reassignError}</span>}
+                                                  </span>
+                                                ) : (
+                                                  <button
+                                                    style={s.editBtn}
+                                                    onClick={() => setReassigningUser({ uid: u.uid, selectedSchoolId: u.schoolId || school.id })}
+                                                  >
+                                                    학교 변경
+                                                  </button>
+                                                )}
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
                                       </tbody>
                                     </table>
                                   )}
