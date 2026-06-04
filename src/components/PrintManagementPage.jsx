@@ -26,6 +26,7 @@ import {
   generateWaitingRosters,
   generateStudentTimetables,
 } from "../utils/classRosterGenerator";
+import { generateStudentTimetablesPDFZip } from "../utils/pdfGenerator";
 
 // ─── 스타일 ──────────────────────────────────────────────────────────────────
 
@@ -149,6 +150,7 @@ const s = {
 export default function PrintManagementPage({ plan, tenantData, schoolName = "OO고등학교" }) {
   const [notice, setNotice] = useState(null);
   const [generating, setGenerating] = useState(false);
+  const [zipProgress, setZipProgress] = useState(null); // { done, total } | null
 
   // 모달: type은 "room" | "subject" | "class" | "waiting"
   const [filterModal, setFilterModal] = useState(null);
@@ -411,6 +413,37 @@ export default function PrintManagementPage({ plan, tenantData, schoolName = "OO
     }
   }
 
+  async function handleStudentTimetablePDFZip(gradeFilter = null) {
+    if (!students.length) { showNotice("error", "학생 데이터가 없습니다."); return; }
+    setNotice(null);
+    setZipProgress({ done: 0, total: 0 });
+    try {
+      const timetables = buildStudentTimetables(gradeFilter);
+      if (!timetables.length) { showNotice("error", "시간표 데이터가 없습니다."); setZipProgress(null); return; }
+
+      const planName = plan?.name || "기말고사";
+      const blob = await generateStudentTimetablesPDFZip(
+        timetables, schoolName, planName, plan, rooms,
+        (done, total) => setZipProgress({ done, total }),
+      );
+
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href     = url;
+      const suffix = gradeFilter ? `_${gradeFilter}학년` : "";
+      a.download = `개인별시간표${suffix}_${today()}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showNotice("success", `${timetables.length}명 / 학급별 PDF ZIP 다운로드 완료`);
+      setFilterModal(null);
+    } catch (err) {
+      console.error(err);
+      showNotice("error", "ZIP 생성 중 오류: " + err.message);
+    } finally {
+      setZipProgress(null);
+    }
+  }
+
   // ── 시험시간표 ────────────────────────────────────────────────────────────
 
   function buildSortedRosters() {
@@ -508,7 +541,9 @@ export default function PrintManagementPage({ plan, tenantData, schoolName = "OO
       isPrint ? handleWaitingPrint(selectedDay, selectedPeriod) : handleWaitingExcel(selectedDay, selectedPeriod);
     } else if (filterModal === "student") {
       const g = selectedGrade || null;
-      isPrint ? handleStudentTimetablePrint(g) : handleStudentTimetableExcel(g);
+      if (selectedFormat === "pdf")   handleStudentTimetablePDFZip(g);
+      else if (isPrint)               handleStudentTimetablePrint(g);
+      else                            handleStudentTimetableExcel(g);
     }
   }
 
@@ -659,25 +694,36 @@ export default function PrintManagementPage({ plan, tenantData, schoolName = "OO
       <div style={s.section}>
         <h3 style={s.sectionTitle}>👤 학생 개인별 시간표</h3>
         <p style={s.sectionDesc}>
-          학생 개인별로 시험 일정·과목·고사실·좌석 정보를 담은 시간표를 생성합니다.
-          인쇄 후 잘라서 배부하거나 Excel로 확인할 수 있습니다.
+          학생 1명당 A4 1페이지 형식으로 학급별 통합 PDF를 생성합니다. 학년 폴더로 묶은 ZIP 파일로 다운로드되며, 학급별로 열어 일괄 인쇄할 수 있습니다.
         </p>
         <div style={s.btnRow}>
-          <button style={canBasic ? s.primaryBtn : s.disabledBtn} onClick={() => handleStudentTimetableExcel()} disabled={!canBasic}>
-            {generating ? "생성 중..." : "📊 전체 생성 (Excel)"}
-          </button>
-          <button style={canBasic ? s.outlineBtn : s.disabledBtn} onClick={() => handleStudentTimetablePrint()} disabled={!canBasic}>
-            🖨️ 전체 인쇄
+          <button
+            style={canBasic && !zipProgress ? s.primaryBtn : s.disabledBtn}
+            onClick={() => handleStudentTimetablePDFZip()}
+            disabled={!canBasic || !!zipProgress}
+          >
+            {zipProgress ? `PDF 생성 중... (${zipProgress.done}/${zipProgress.total})` : "📥 전체 PDF ZIP 다운로드"}
           </button>
           <button
-            style={canBasic ? s.outlineBtn : s.disabledBtn}
-            onClick={() => { setFilterModal("student"); setSelectedGrade(""); setSelectedFormat("excel"); }}
-            disabled={!canBasic}
+            style={canBasic && !zipProgress ? s.outlineBtn : s.disabledBtn}
+            onClick={() => { setFilterModal("student"); setSelectedGrade(""); setSelectedFormat("pdf"); }}
+            disabled={!canBasic || !!zipProgress}
           >
             🔍 학년 선택
           </button>
+          <button style={canBasic ? s.outlineBtn : s.disabledBtn} onClick={() => handleStudentTimetableExcel()} disabled={!canBasic}>
+            📊 Excel
+          </button>
         </div>
-        <p style={s.hintText}>💡 인쇄 시 A4 portrait 4매(2×2) 배치로 출력됩니다.</p>
+        {zipProgress && zipProgress.total > 0 && (
+          <div style={{ marginTop: "0.5rem" }}>
+            <div style={{ height: "6px", backgroundColor: "#e5e7eb", borderRadius: "999px", overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${Math.round((zipProgress.done / zipProgress.total) * 100)}%`, backgroundColor: "#4f46e5", borderRadius: "999px", transition: "width 0.2s" }} />
+            </div>
+            <p style={{ ...s.hintText, marginTop: "0.25rem" }}>{zipProgress.done}/{zipProgress.total} 학급 완료</p>
+          </div>
+        )}
+        <p style={s.hintText}>💡 ZIP 내 폴더 구조: 1학년/1학년_1반.pdf, 2학년/2학년_1반.pdf …</p>
       </div>
 
       {/* 6. 시험시간표 */}
@@ -732,6 +778,7 @@ export default function PrintManagementPage({ plan, tenantData, schoolName = "OO
             <div>
               <label style={s.label}>출력 형식</label>
               <select style={s.select} value={selectedFormat} onChange={(e) => setSelectedFormat(e.target.value)}>
+                {filterModal === "student" && <option value="pdf">PDF (학급별 ZIP)</option>}
                 <option value="excel">Excel (.xlsx)</option>
                 <option value="print">HTML 인쇄 (브라우저)</option>
               </select>
@@ -791,8 +838,12 @@ export default function PrintManagementPage({ plan, tenantData, schoolName = "OO
 
             <div style={s.modalActions}>
               <button style={s.outlineBtn} onClick={() => setFilterModal(null)}>취소</button>
-              <button style={s.primaryBtn} onClick={handleFilteredGenerate} disabled={generating}>
-                {generating ? "생성 중..." : selectedFormat === "excel" ? "Excel 생성" : "인쇄 페이지 열기"}
+              <button style={s.primaryBtn} onClick={handleFilteredGenerate} disabled={generating || !!zipProgress}>
+                {zipProgress
+                  ? `생성 중... (${zipProgress.done}/${zipProgress.total})`
+                  : selectedFormat === "pdf"   ? "PDF ZIP 다운로드"
+                  : selectedFormat === "excel" ? "Excel 생성"
+                  : "인쇄 페이지 열기"}
               </button>
             </div>
           </div>
