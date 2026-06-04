@@ -93,24 +93,45 @@ export default function WaitingRoomAssignmentPage({
   }
 
   // 자동 배정: 학급 인원 기준 대기실 순차 채우기
+  // 같은 교시의 타 학년 기존 배정 인원을 시작값으로 설정해 실제 잔여 용량 기준 배정
   function handleAutoAssign(periodKey, classes) {
     if (!waitingRooms.length) return;
+
+    // 자동 배정 대상 학급 키 집합
+    const assigningKeys = new Set(classes.map((c) => `${c.grade}-${c.classNo}`));
+
+    // 타 학년 기존 배정 인원으로 roomState 초기화
+    const allClassesFull = waitingPeriods.find((p) => p.periodKey === periodKey)?.classes ?? [];
     const roomState = waitingRooms
       .sort((a, b) => b.capacity - a.capacity)
-      .map((r) => ({ id: r.id, cap: r.capacity || 40, used: 0 }));
+      .map((r) => {
+        const otherUsed = allClassesFull
+          .filter((c) => !assigningKeys.has(`${c.grade}-${c.classNo}`))
+          .reduce((acc, c) => {
+            const rid = getAssignedRoom(periodKey, c.grade, c.classNo);
+            return rid === r.id ? acc + c.students.length : acc;
+          }, 0);
+        return { id: r.id, cap: r.capacity || 40, used: otherUsed };
+      });
 
     // 인원 많은 학급부터 배정
     const sorted = [...classes].sort((a, b) => b.students.length - a.students.length);
-    const result = {};
+    // 타 학년 기존 배정은 유지하고 자동 배정 대상만 갱신
+    const result = { ...(waitingAssignments[periodKey] ?? {}) };
 
     for (const cls of sorted) {
-      // 여유 있는 첫 번째 방, 없으면 가장 덜 찬 방
+      const ck = `${cls.grade}-${cls.classNo}`;
+      // 기존 방에서 제거
+      Object.keys(result).forEach((rid) => {
+        result[rid] = (result[rid] ?? []).filter((k) => k !== ck);
+      });
+      // 잔여 용량 있는 방 우선, 없으면 가장 덜 찬 방
       let target = roomState.reduce((best, r) => (r.used < best.used ? r : best), roomState[0]);
       for (const r of roomState) {
         if (r.used + cls.students.length <= r.cap) { target = r; break; }
       }
       if (!result[target.id]) result[target.id] = [];
-      result[target.id].push(`${cls.grade}-${cls.classNo}`);
+      result[target.id].push(ck);
       target.used += cls.students.length;
     }
 
@@ -202,11 +223,24 @@ export default function WaitingRoomAssignmentPage({
         const confirmed = waitingConfirmed?.[period.periodKey] ?? false;
         const totalWaiting = period.classes.reduce((acc, c) => acc + c.students.length, 0);
 
-        // 대기실별 배정 인원 집계
-        const roomUsage = {};
+        // 전체 학년 기준 집계 — 필터와 무관하게 실제 총 점유 인원
+        const allClassesFull = waitingPeriods.find((p) => p.periodKey === period.periodKey)?.classes ?? period.classes;
+        const roomUsageAll = {};       // roomId → 총 인원
+        const roomUsageByGrade = {};   // roomId → { grade: 인원 }
+        allClassesFull.forEach((cls) => {
+          const rid = getAssignedRoom(period.periodKey, cls.grade, cls.classNo);
+          if (!rid) return;
+          roomUsageAll[rid] = (roomUsageAll[rid] ?? 0) + cls.students.length;
+          if (!roomUsageByGrade[rid]) roomUsageByGrade[rid] = {};
+          const g = String(cls.grade);
+          roomUsageByGrade[rid][g] = (roomUsageByGrade[rid][g] ?? 0) + cls.students.length;
+        });
+
+        // 현재 필터 학년만의 점유 (분할 바용)
+        const roomUsageFiltered = {};
         period.classes.forEach((cls) => {
           const rid = getAssignedRoom(period.periodKey, cls.grade, cls.classNo);
-          if (rid) roomUsage[rid] = (roomUsage[rid] ?? 0) + cls.students.length;
+          if (rid) roomUsageFiltered[rid] = (roomUsageFiltered[rid] ?? 0) + cls.students.length;
         });
 
         const unassignedCount = period.classes
@@ -233,6 +267,13 @@ export default function WaitingRoomAssignmentPage({
                 <span style={{ ...s.badge, ...s.badgeGreen }}>확정</span>
               )}
               <div style={s.headerActions}>
+                <button
+                  style={{ ...s.secondaryBtn, color: "#dc2626", borderColor: "#fca5a5" }}
+                  disabled={confirmed}
+                  onClick={() => onUpdateWaitingAssignments(period.periodKey, {})}
+                >
+                  초기화
+                </button>
                 <button
                   style={s.secondaryBtn}
                   disabled={confirmed}
@@ -304,30 +345,53 @@ export default function WaitingRoomAssignmentPage({
               {/* 오른쪽: 대기실 현황 */}
               <div style={s.sidebar}>
                 <div style={s.sideCard}>
-                  <div style={s.sideTitle}>대기실 현황</div>
+                  <div style={s.sideTitle}>
+                    대기실 현황
+                    {gradeFilter !== "all" && (
+                      <span style={{ fontWeight: 400, color: "#9ca3af", marginLeft: "0.3rem", fontSize: "0.7rem" }}>전체 학년</span>
+                    )}
+                  </div>
                   {waitingRooms.map((room) => {
-                    const used = roomUsage[room.id] ?? 0;
-                    const cap = room.capacity || 0;
-                    const over = cap > 0 && used > cap;
-                    const pct = cap > 0 ? Math.min(100, (used / cap) * 100) : 0;
+                    const usedAll      = roomUsageAll[room.id] ?? 0;
+                    const usedFiltered = roomUsageFiltered[room.id] ?? 0;
+                    const usedOther    = usedAll - usedFiltered;
+                    const cap  = room.capacity || 0;
+                    const over = cap > 0 && usedAll > cap;
+                    const pctAll      = cap > 0 ? Math.min(100, (usedAll / cap) * 100) : 0;
+                    const pctOther    = cap > 0 ? Math.min(100, (usedOther / cap) * 100) : 0;
+                    const pctFiltered = cap > 0 ? Math.min(100, (usedFiltered / cap) * 100) : 0;
                     return (
-                      <div key={room.id} style={s.roomRow}>
+                      <div key={room.id} style={{ ...s.roomRow, flexWrap: "wrap", rowGap: "0.1rem" }}>
                         <span style={{ minWidth: "5rem", fontWeight: 600, fontSize: "0.82rem" }}>
                           {room.name}
                         </span>
-                        <span style={{ color: over ? "#dc2626" : used > 0 ? "#059669" : "#9ca3af", fontWeight: 600, fontSize: "0.82rem", minWidth: "3.5rem" }}>
-                          {used}/{cap}명
+                        <span style={{ color: over ? "#dc2626" : usedAll > 0 ? "#059669" : "#9ca3af", fontWeight: 600, fontSize: "0.82rem", minWidth: "3.5rem" }}>
+                          {usedAll}/{cap}명
                         </span>
+                        {/* 분할 바: 타학년(보라) + 이 학년(파랑) */}
                         <div style={s.barWrap}>
-                          <div
-                            style={{
-                              width: `${pct}%`,
-                              height: "100%",
-                              backgroundColor: over ? "#dc2626" : "#4f46e5",
-                              borderRadius: "3px",
-                            }}
-                          />
+                          <div style={{ display: "flex", height: "100%", borderRadius: "3px", overflow: "hidden" }}>
+                            {gradeFilter !== "all" && usedOther > 0 && (
+                              <div style={{ width: `${pctOther}%`, backgroundColor: "#a78bfa" }} />
+                            )}
+                            <div style={{ width: `${gradeFilter !== "all" ? pctFiltered : pctAll}%`, backgroundColor: over ? "#dc2626" : "#4f46e5" }} />
+                          </div>
                         </div>
+                        {(() => {
+                          const gradeBreakdown = roomUsageByGrade[room.id] ?? {};
+                          const grades = Object.keys(gradeBreakdown).sort();
+                          if (grades.length < 2) return null;
+                          return (
+                            <span style={{ width: "100%", fontSize: "0.68rem", color: "#6b7280", paddingLeft: "5.5rem" }}>
+                              {grades.map((g) => (
+                                <span key={g} style={{ marginRight: "0.6rem" }}>
+                                  <span style={{ color: gradeFilter !== "all" && g === gradeFilter ? "#4f46e5" : "#7c3aed" }}>■</span>
+                                  {" "}{g}학년 {gradeBreakdown[g]}명
+                                </span>
+                              ))}
+                            </span>
+                          );
+                        })()}
                       </div>
                     );
                   })}

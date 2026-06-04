@@ -120,10 +120,19 @@ export function generateWaitingRosters(subjectRosters, allStudents, plan) {
         periodId: session.periodId,
         dayLabel: roster.dayLabel,
         periodLabel: roster.periodLabel,
-        startTime: roster.startTime,
-        endTime: roster.endTime,
+        startTime: roster.startTime ?? "",
+        endTime:   roster.endTime   ?? "",
         examKeys: new Set(),
       });
+    } else {
+      // 여러 학년 세션이 같은 교시에 있을 때 — 가장 이른 시작·가장 늦은 종료로 갱신
+      const entry = periodMap.get(key);
+      if (roster.startTime && (!entry.startTime || roster.startTime < entry.startTime)) {
+        entry.startTime = roster.startTime;
+      }
+      if (roster.endTime && (!entry.endTime || roster.endTime > entry.endTime)) {
+        entry.endTime = roster.endTime;
+      }
     }
 
     roster.students.forEach((s) => {
