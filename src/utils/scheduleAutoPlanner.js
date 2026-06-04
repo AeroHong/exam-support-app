@@ -323,11 +323,13 @@ export function computeDayStats(sessions, studentSets, dayId, periods, grade) {
     .filter((s) => s.size > 0);
 
   let tripleCount = 0;
+  let tripleStudentIds = new Set();
   if (periodStudentSets.length >= 3) {
     const intersection = periodStudentSets.reduce(
       (acc, s) => new Set([...acc].filter((x) => s.has(x))),
     );
     tripleCount = intersection.size;
+    tripleStudentIds = intersection;
   }
 
   // 슬롯 내 충돌 세션 감지 — 지정과목 포함 쌍은 무조건 충돌
@@ -350,7 +352,7 @@ export function computeDayStats(sessions, studentSets, dayId, periods, grade) {
     }
   }
 
-  return { periodStats, tripleCount, conflicts, dayStudentCount: dayStudents.size, dayStudentIds: dayStudents };
+  return { periodStats, tripleCount, tripleStudentIds, conflicts, dayStudentCount: dayStudents.size, dayStudentIds: dayStudents };
 }
 
 // ── 배치 결과 평가 ────────────────────────────────────────────────────────────

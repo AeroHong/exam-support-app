@@ -681,7 +681,7 @@ export default function StudentRosterTab({ schoolId, subjects = [], onDataChange
                     <thead style={s.thead}>
                       <tr>
                         <th style={s.th}>과목</th>
-                        {["A","B","C","D","E"].map(sec => <th key={sec} style={{ ...s.th, textAlign: "center" }}>{sec}</th>)}
+                        {["A","B","C","D","E","F","G","H","I","J","K","L","M"].map(sec => <th key={sec} style={{ ...s.th, textAlign: "center" }}>{sec}</th>)}
                         <th style={{ ...s.th, textAlign: "center" }}>합계</th>
                       </tr>
                     </thead>
@@ -691,7 +691,7 @@ export default function StudentRosterTab({ schoolId, subjects = [], onDataChange
                         return (
                           <tr key={subject} style={s.tr}>
                             <td style={s.td}>{subject}</td>
-                            {["A","B","C","D","E"].map(sec => (
+                            {["A","B","C","D","E","F","G","H","I","J","K","L","M"].map(sec => (
                               <td key={sec} style={{ ...s.td, textAlign: "center", color: secCounts[sec] ? "#111827" : "#e5e7eb" }}>
                                 {secCounts[sec] ?? "—"}
                               </td>

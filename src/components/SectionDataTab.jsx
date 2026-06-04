@@ -351,7 +351,7 @@ export default function SectionDataTab({ schoolId, enrollments = [], onDataChang
         <p style={{ ...s.sectionHead, marginBottom: "0.5rem" }}>안내</p>
         <ul style={{ fontSize: "0.82rem", color: "#6b7280", margin: 0, paddingLeft: "1.2rem", lineHeight: 1.8 }}>
           <li>업로드 시 해당 학년의 학생 명렬과 수강신청 정보가 함께 갱신됩니다.</li>
-          <li><strong>1행 헤더 형식</strong>: 학년·반·번호·이름·성별 이후 열에 과목명을 헤더로, 값은 분반(A–E) 또는 빈 칸.</li>
+          <li><strong>1행 헤더 형식</strong>: 학년·반·번호·이름·성별 이후 열에 과목명을 헤더로, 값은 분반(A–M) 또는 빈 칸.</li>
           <li><strong>3행 헤더 형식</strong>: 학기·지정/선택·과목명 순서의 3행 헤더 (기존 파일 그대로 사용 가능).</li>
           <li>분반 데이터가 있으면 고사실 배정 시 "분반별 배정" 방식을 선택할 수 있습니다.</li>
         </ul>

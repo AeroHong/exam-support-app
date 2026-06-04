@@ -52,7 +52,7 @@ function parseSamsungFormat(rows) {
       const val = row[col];
       if (val === undefined || val === null || val === "") continue;
       const strVal = String(val).trim().toUpperCase();
-      if (/^[A-E]$/.test(strVal)) {
+      if (/^[A-M]$/.test(strVal)) {
         enrollments.push({ studentId, subjectName, grade, section: strVal });
       }
     }
@@ -96,7 +96,7 @@ function parseGenericFormat(rows) {
       const val = row[col];
       if (val === undefined || val === null || val === "") continue;
       const strVal = String(val).trim().toUpperCase();
-      if (/^[A-E]$/.test(strVal)) {
+      if (/^[A-M]$/.test(strVal)) {
         enrollments.push({ studentId, subjectName, grade, section: strVal });
       }
     }

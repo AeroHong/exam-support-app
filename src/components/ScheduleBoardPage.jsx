@@ -149,10 +149,9 @@ const s = {
   badgeStudy:     { fontSize: "0.58rem", fontWeight: 700, backgroundColor: "#fef3c7", color: "#92400e", borderRadius: "3px", padding: "0 0.28rem" },
   timeEditPanel:  { borderTop: "1px dashed #c7d2fe", marginTop: "0.3rem", paddingTop: "0.3rem" },
   timeEditMeta:   { fontSize: "0.65rem", color: "#6b7280", marginBottom: "0.25rem", lineHeight: 1.4 },
-  stepperRow:     { display: "flex", alignItems: "center", gap: "0.25rem", marginBottom: "0.25rem" },
-  stepLabel:      { fontSize: "0.68rem", color: "#374151", fontWeight: 600, flexShrink: 0 },
-  stepBtn:        { width: "22px", height: "22px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.7rem", fontWeight: 700, backgroundColor: "#f3f4f6", color: "#374151", border: "1px solid #d1d5db", borderRadius: "4px", cursor: "pointer", padding: 0, lineHeight: 1 },
-  stepVal:        { fontSize: "0.8rem", fontWeight: 700, minWidth: "30px", textAlign: "center", color: "#111827" },
+  timeEditRow:    { display: "flex", alignItems: "center", gap: "0.3rem", marginBottom: "0.28rem" },
+  timeEditLabel:  { fontSize: "0.68rem", color: "#374151", fontWeight: 600, flexShrink: 0 },
+  timeInput:      { fontSize: "0.8rem", fontWeight: 700, color: "#111827", border: "1px solid #c7d2fe", borderRadius: "5px", padding: "0.12rem 0.3rem", backgroundColor: "#f8f9ff", outline: "none", width: "130px" },
   timeEditBtns:   { display: "flex", gap: "0.25rem" },
   saveTimeBtn:    { flex: 1, padding: "0.22rem 0", backgroundColor: "#4f46e5", color: "#fff", border: "none", borderRadius: "5px", fontSize: "0.72rem", fontWeight: 600, cursor: "pointer" },
   cancelTimeBtn:  { flex: 1, padding: "0.22rem 0", backgroundColor: "#fff", color: "#6b7280", border: "1px solid #d1d5db", borderRadius: "5px", fontSize: "0.72rem", cursor: "pointer" },
@@ -243,7 +242,7 @@ function getSameDayOtherGradeSessions(allSessions, dayId, currentGrade) {
   for (const s of allSessions) {
     if (s.dayId !== dayId || String(s.grade) === String(currentGrade) || !s.startTime) continue;
     const selfStudy = s.selfStudyMinutes || 0;
-    const examStart = selfStudy > 0 ? addMinutes(s.startTime, selfStudy) : s.startTime;
+    const examStart = selfStudy !== 0 ? addMinutes(s.startTime, selfStudy) : s.startTime;
     const duration  = s.duration ?? 50;
     result.push({ grade: String(s.grade), examStart, duration, endTime: addMinutes(examStart, duration) });
   }
@@ -653,7 +652,18 @@ function GradeBoardPanel({
                   {isDayOver && <div style={{ fontSize: "0.65rem", color: "#4f46e5", fontWeight: 600, marginTop: "0.1rem" }}>여기로 이동</div>}
                   {!isDayOver && dayEmpty && <div style={{ fontSize: "0.65rem", color: "#dc2626", fontWeight: 600, marginTop: "0.1rem" }}>과목 없음</div>}
                   {!isDayOver && !dayEmpty && dStats?.tripleCount > 0 && (
-                    <div style={s.tripleWarn}>3연속 {dStats.tripleCount}명</div>
+                    <div
+                      style={{ ...s.tripleWarn, cursor: "pointer", textDecoration: "underline" }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setModal({
+                          title: `${day.label} 3연속 응시 학생 (${grade}학년)`,
+                          studentIds: [...(dStats.tripleStudentIds ?? [])],
+                        });
+                      }}
+                    >
+                      3연속 {dStats.tripleCount}명
+                    </div>
                   )}
                 </div>
               );
@@ -1009,17 +1019,34 @@ export default function ScheduleBoardPage({
 
 // ── 세션 카드 컴포넌트 ────────────────────────────────────────────────────────
 
+// "HH:MM" 두 시각 차이를 분으로 반환 (음수 허용 — 기준보다 앞당긴 경우)
+function diffMinutes(from, to) {
+  if (!from || !to) return 0;
+  const [fh, fm] = from.split(":").map(Number);
+  const [th, tm] = to.split(":").map(Number);
+  return (th * 60 + tm) - (fh * 60 + fm);
+}
+
 function SessionCard({
   session, variant, isConflict, isManual, isDragging,
   onDragStart, onDragEnd, onRemove,
   isEditingTime, onToggleTimeEdit, onAdjustTime,
   confirmed, crossGradeEndTimes,
 }) {
-  const [localStudy, setLocalStudy] = useState(session.selfStudyMinutes || 0);
+  const selfStudy   = session.selfStudyMinutes || 0;
+  const baseStart   = session.startTime || "";
+  const examStart   = baseStart && selfStudy !== 0 ? addMinutes(baseStart, selfStudy) : baseStart;
+
+  const [localExamStart, setLocalExamStart] = useState(examStart || baseStart || "");
 
   useEffect(() => {
-    setLocalStudy(session.selfStudyMinutes || 0);
-  }, [session.selfStudyMinutes]);
+    const es = (() => {
+      const ss = session.selfStudyMinutes || 0;
+      const bs = session.startTime || "";
+      return bs && ss !== 0 ? addMinutes(bs, ss) : bs;
+    })();
+    setLocalExamStart(es || "");
+  }, [session.selfStudyMinutes, session.startTime]);
 
   if (variant === "palette") {
     return (
@@ -1034,14 +1061,11 @@ function SessionCard({
     );
   }
 
-  const selfStudy       = session.selfStudyMinutes || 0;
-  const baseStart       = session.startTime || "";
-  const examStart       = baseStart && selfStudy > 0 ? addMinutes(baseStart, selfStudy) : baseStart;
-  const endTime         = examStart ? addMinutes(examStart, session.duration ?? 50) : "";
+  const endTime = examStart ? addMinutes(examStart, session.duration ?? 50) : "";
 
-  // 인라인 편집 중 미리보기용
-  const previewExamStart = baseStart && localStudy > 0 ? addMinutes(baseStart, localStudy) : baseStart;
-  const previewEnd       = previewExamStart ? addMinutes(previewExamStart, session.duration ?? 50) : "";
+  // 인라인 편집 중 미리보기
+  const previewStudy = diffMinutes(baseStart, localExamStart);
+  const previewEnd   = localExamStart ? addMinutes(localExamStart, session.duration ?? 50) : "";
 
   // 현재 세션과 1분이라도 겹치는 타학년 세션만 학년별로 집계 (같은 날 다른 교시 포함)
   const overlappingGrades = (() => {
@@ -1055,7 +1079,7 @@ function SessionCard({
     }
     return Object.entries(byGrade)
       .sort(([a], [b]) => Number(a) - Number(b))
-      .map(([grade, otherEnd]) => ({ grade, otherEnd }));
+      .map(([grade, otherEnd]) => ({ grade, otherEnd, synced: !!endTime && otherEnd === endTime }));
   })();
 
   return (
@@ -1086,7 +1110,8 @@ function SessionCard({
         {isManual    && <span style={s.badgeManual}>수동</span>}
         {session.isRequired && <span style={s.badgeReq}>지정</span>}
         {session.isEssay    && <span style={s.badgeEssay}>서논술</span>}
-        {selfStudy > 0 && <span style={s.badgeStudy}>자습{selfStudy}분</span>}
+        {selfStudy > 0 && <span style={s.badgeStudy}>자습 {selfStudy}분</span>}
+        {selfStudy < 0 && <span style={s.badgeStudy}>앞당김 {Math.abs(selfStudy)}분</span>}
         {baseStart && !confirmed && (
           <button
             style={{ ...s.timeEditBtn, marginLeft: "auto" }}
@@ -1102,34 +1127,54 @@ function SessionCard({
       {isEditingTime && (
         <div style={s.timeEditPanel} onClick={(e) => e.stopPropagation()}>
           <p style={s.timeEditMeta}>
-            교시 시작: {baseStart}
-            {localStudy > 0 && ` → 시험: ${previewExamStart}`}
-            {" → 종료: "}{previewEnd || "—"}
+            교시 기준: {baseStart || "—"} · {session.duration ?? 50}분 시험
           </p>
-          <div style={s.stepperRow}>
-            <span style={s.stepLabel}>자습</span>
-            <button style={s.stepBtn} onClick={() => setLocalStudy((m) => Math.max(0, m - 5))}>−5</button>
-            <span style={s.stepVal}>{localStudy}분</span>
-            <button style={s.stepBtn} onClick={() => setLocalStudy((m) => m + 5)}>+5</button>
+          <div style={s.timeEditRow}>
+            <span style={s.timeEditLabel}>시험 시작</span>
+            <input
+              type="time"
+              style={s.timeInput}
+              value={localExamStart}
+              onChange={(e) => setLocalExamStart(e.target.value)}
+            />
           </div>
+          <p style={{ ...s.timeEditMeta, color: previewStudy !== 0 ? "#92400e" : "#6b7280" }}>
+            {previewStudy > 0 && `자습 ${previewStudy}분 → `}
+            {previewStudy < 0 && `앞당김 ${Math.abs(previewStudy)}분 → `}
+            종료 {previewEnd || "—"}
+          </p>
           <div style={s.timeEditBtns}>
-            <button style={s.saveTimeBtn} onClick={() => onAdjustTime?.(session.id, localStudy)}>적용</button>
-            <button style={s.cancelTimeBtn} onClick={() => { setLocalStudy(selfStudy); onToggleTimeEdit?.(); }}>취소</button>
+            <button style={s.saveTimeBtn} onClick={() => onAdjustTime?.(session.id, previewStudy)}>적용</button>
+            <button style={s.cancelTimeBtn} onClick={() => { setLocalExamStart(examStart || baseStart || ""); onToggleTimeEdit?.(); }}>취소</button>
           </div>
         </div>
       )}
 
-      {/* 타 학년 시간 겹침 경고 */}
-      {!isEditingTime && overlappingGrades.length > 0 && (
-        <div style={s.crossGradeWrap}>
-          <div style={s.crossGradeRow}>
-            <span style={s.crossGradeOverlap}>⚠ 겹침:</span>
-            {overlappingGrades.map(({ grade, otherEnd }) => (
-              <span key={grade}>{grade}학년 ~{otherEnd}</span>
-            ))}
+      {/* 타 학년 시간 겹침 / 종료 맞춤 */}
+      {!isEditingTime && overlappingGrades.length > 0 && (() => {
+        const mismatched = overlappingGrades.filter((g) => !g.synced);
+        const synced     = overlappingGrades.filter((g) => g.synced);
+        return (
+          <div style={s.crossGradeWrap}>
+            {mismatched.length > 0 && (
+              <div style={s.crossGradeRow}>
+                <span style={s.crossGradeOverlap}>⚠ 겹침:</span>
+                {mismatched.map(({ grade, otherEnd }) => (
+                  <span key={grade}>{grade}학년 ~{otherEnd}</span>
+                ))}
+              </div>
+            )}
+            {synced.length > 0 && (
+              <div style={{ ...s.crossGradeRow, color: "#16a34a" }}>
+                <span style={{ fontWeight: 700 }}>✓ 종료 맞춤:</span>
+                {synced.map(({ grade }) => (
+                  <span key={grade}>{grade}학년</span>
+                ))}
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
