@@ -84,25 +84,26 @@ function autoAssignToRooms(nonDelegation, roomIds, rooms) {
 
   const assignedMap = new Map(); // studentId → { roomId, roomName, seatNumber }
   let roomIdx = 0;
-  let seatInRoom = 0;
+  let normalInRoom = 0; // 일반 학생 기준으로만 방 이동·좌석번호 부여
 
   for (const student of nonDelegation) {
     const room = sessionRooms[roomIdx];
     const cap = room.capacity || fallbackCap || 30;
 
-    // 현재 방 가득 찼으면 다음 방으로 (마지막 방은 오버플로 허용)
-    if (seatInRoom >= cap && roomIdx < sessionRooms.length - 1) {
+    // 방 이동 기준: 일반 학생(좌석 점유) 수만 사용 — 도움실/별도실은 좌석 미점유
+    if (normalInRoom >= cap && roomIdx < sessionRooms.length - 1) {
       roomIdx++;
-      seatInRoom = 0;
+      normalInRoom = 0;
     }
 
     const cur = sessionRooms[roomIdx];
+    const isNormal = !student.examStatus || student.examStatus === "";
     assignedMap.set(student.id, {
       roomId: cur.id,
       roomName: cur.name,
-      seatNumber: seatInRoom + 1,
+      seatNumber: isNormal ? normalInRoom + 1 : "", // 도움실/별도실은 좌석번호 없음
     });
-    seatInRoom++;
+    if (isNormal) normalInRoom++;
   }
 
   // roomGroups 구성
