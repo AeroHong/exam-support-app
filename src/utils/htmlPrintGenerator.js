@@ -25,9 +25,8 @@ const BASE_CSS = `
   .page:last-child { page-break-after: avoid; }
 
   /* 고사실별 응시 현황표 헤더 */
-  .doc-title { font-size: 17pt; font-weight: bold; text-align: center; margin-bottom: 3px; letter-spacing: -0.3px; }
-  .doc-subtitle { font-size: 10.5pt; font-weight: 600; text-align: center; color: #222;
-    border-bottom: 1.5px solid #333; padding-bottom: 5px; margin-bottom: 7px; }
+  .doc-title { font-size: 20pt; font-weight: bold; text-align: center; margin-bottom: 8px; letter-spacing: -0.3px;
+    border-bottom: 1.5px solid #333; padding-bottom: 6px; }
   .info-strip { display: flex; border: 1.5px solid #333; margin-bottom: 8px; }
   .info-item { flex: 1; display: flex; align-items: center; gap: 6px;
     padding: 5px 9px; border-right: 1px solid #555; font-size: 9pt; }
@@ -108,8 +107,7 @@ function roomPage(roster, rg) {
   }
 
   return `<div class="page">
-  <div class="doc-title">${subjectFull} 응시현황표</div>
-  <div class="doc-subtitle">${rg.roomName}&emsp;${grade}학년</div>
+  <div class="doc-title">${grade}학년 ${subjectFull} ${rg.roomName} 응시현황표</div>
   <div class="info-strip">
     <div class="info-item"><span class="info-label">고사일</span>${dayLabel}</div>
     <div class="info-item"><span class="info-label">교시</span>${periodLabel}&ensp;(${startTime}~${endTime})</div>

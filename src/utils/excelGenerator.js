@@ -85,7 +85,7 @@ export function generateSessionRoomRosterExcel(subjectRoster, schoolName = "OO�
 
   // 스타일 정의
   const sTitleRow = {
-    font: { bold: true, sz: 12 },
+    font: { bold: true, sz: 16 },
     alignment: { horizontal: "center", vertical: "center" },
   };
   const sMetaHeader = {
@@ -130,9 +130,9 @@ export function generateSessionRoomRosterExcel(subjectRoster, schoolName = "OO�
 
     const rows = [];
 
-    // 행 1: 제목 (과목코드 포함)
+    // 행 1: 제목
     rows.push([
-      { v: `${roomName}  ${subjectCell}  응시현황표`, t: "s", s: sTitleRow },
+      { v: `${grade}학년 ${subjectCell} ${roomName} 응시현황표`, t: "s", s: sTitleRow },
       "", "", "", "", "", "", "",
     ]);
     // 행 2: 빈칸
@@ -215,7 +215,7 @@ export function generateSessionRoomRosterExcel(subjectRoster, schoolName = "OO�
     ];
     // 전체 행 높이: 메타 행 + 학생 행 모두 설정
     const rowHeights = [
-      { hpx: 22 }, // 행1 제목
+      { hpx: 32 }, // 행1 제목
       { hpx: 6 },  // 행2 빈칸
       { hpx: 32 }, // 행3 메타 헤더 (줄바꿈)
       { hpx: 32 }, // 행4 메타 데이터 (줄바꿈)
