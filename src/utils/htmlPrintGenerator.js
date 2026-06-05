@@ -5,23 +5,42 @@
 function makeStudentId(s) {
   return `${s.grade}${String(s.classNo).padStart(2, "0")}${String(s.number).padStart(2, "0")}`;
 }
+
+// "홍길동 (1.01 전입)" → "홍길동"
+function extractName(raw) {
+  if (!raw) return "";
+  return raw.replace(/\s*\(.*?\)\s*$/, "").trim();
+}
+
 function specialLabel(s) {
-  return `${makeStudentId(s)} ${s.name} (${s.gender || "남"})`;
+  return `${makeStudentId(s)} ${extractName(s.name)} (${s.gender || "남"})`;
 }
 
 const BASE_CSS = `
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: '맑은 고딕', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; font-size: 10pt; }
-  .page { padding: 12mm 15mm; page-break-after: always; }
+  .page { padding: 10mm 13mm; page-break-after: always; }
   .page:last-child { page-break-after: avoid; }
-  table { width: 100%; border-collapse: collapse; margin-top: 6px; }
-  th, td { border: 1px solid #000; padding: 3px 6px; text-align: center; font-size: 9pt; vertical-align: middle; }
+
+  /* 고사실별 응시 현황표 헤더 */
+  .doc-title { font-size: 17pt; font-weight: bold; text-align: center; margin-bottom: 3px; letter-spacing: -0.3px; }
+  .doc-subtitle { font-size: 10.5pt; font-weight: 600; text-align: center; color: #222;
+    border-bottom: 1.5px solid #333; padding-bottom: 5px; margin-bottom: 7px; }
+  .info-strip { display: flex; border: 1.5px solid #333; margin-bottom: 8px; }
+  .info-item { flex: 1; display: flex; align-items: center; gap: 6px;
+    padding: 5px 9px; border-right: 1px solid #555; font-size: 9pt; }
+  .info-item:last-child { border-right: none; }
+  .info-label { font-weight: bold; background: #e8e8e8; padding: 1px 5px;
+    white-space: nowrap; font-size: 8.5pt; }
+
+  /* 공통 테이블 */
+  table { width: 100%; border-collapse: collapse; margin-top: 5px; }
+  th, td { border: 1px solid #000; padding: 4px 6px; text-align: center; font-size: 9pt; vertical-align: middle; }
   th { background: #ddd; font-weight: bold; }
   td.left { text-align: left; }
   .title { text-align: center; font-size: 14pt; font-weight: bold; margin-bottom: 5px; }
   .subtitle { text-align: center; font-size: 9pt; margin-bottom: 8px; }
   .meta { font-size: 9pt; margin-bottom: 3px; }
-  .sign { margin-top: 14px; font-size: 9pt; }
   .dim { color: #888; }
   @media print { @page { margin: 8mm; } }
 `;
@@ -51,8 +70,8 @@ export function openPrintWindow(html) {
 // ─── 고사실별 응시 현황표 ──────────────────────────────────────────────────────
 
 function roomPage(roster, rg) {
-  const { subjectName, subjectCode, dayLabel, periodLabel, startTime, endTime } = roster;
-  const subjectCell = `${subjectName}${subjectCode ? `(${subjectCode})` : ""}`;
+  const { subjectName, subjectCode, dayLabel, periodLabel, startTime, endTime, grade, isEssay } = roster;
+  const subjectFull = `${subjectName}${subjectCode ? ` (${subjectCode})` : ""}`;
   const seated = rg.students;
   const sp = rg.specialInRoom || [];
   const sep = rg.separateInRoom || [];
@@ -64,23 +83,29 @@ function roomPage(roster, rg) {
     const st = seated[i];
     const spSt = sp[i];
     const sepSt = sep[i];
+    // 데이터 없는 도움실/별도실 셀은 테두리 제거
+    const spTd  = spSt  ? `<td class="left">${specialLabel(spSt)}</td>`  : `<td style="border:none"></td>`;
+    const sepTd = sepSt ? `<td class="left">${specialLabel(sepSt)}</td>` : `<td style="border:none"></td>`;
     rows += `<tr>
       <td>${st ? st.seatNumber : ""}</td>
       <td>${st ? makeStudentId(st) : ""}</td>
-      <td class="left">${st ? st.name : ""}</td>
+      <td class="left">${st ? extractName(st.name) : ""}</td>
       <td>${st ? (st.gender || "") : ""}</td>
-      <td>□</td>
+      <td>${st ? "□" : ""}</td>
       <td style="border:none"></td>
-      <td class="left">${spSt ? specialLabel(spSt) : ""}</td>
-      <td class="left">${sepSt ? specialLabel(sepSt) : ""}</td>
+      ${spTd}
+      ${sepTd}
     </tr>`;
   }
 
   return `<div class="page">
-  <div class="title">${rg.roomName}  ${subjectName}  응시현황표</div>
-  <div class="meta">고사일: ${dayLabel}&nbsp;&nbsp;&nbsp;교시: ${periodLabel} (${startTime}~${endTime})</div>
-  <div class="meta">고사실: ${rg.roomName}&nbsp;&nbsp;&nbsp;과목: ${subjectCell}</div>
-  <div class="meta">재적 ${total}명&nbsp;&nbsp;응시 ${seated.length}명&nbsp;&nbsp;도움실 ${sp.length}명&nbsp;&nbsp;별도실 ${sep.length}명</div>
+  <div class="doc-title">${subjectFull} 응시현황표</div>
+  <div class="doc-subtitle">${rg.roomName}&emsp;${grade}학년&emsp;${isEssay ? "서논술형" : "선택형"}</div>
+  <div class="info-strip">
+    <div class="info-item"><span class="info-label">고사일</span>${dayLabel}</div>
+    <div class="info-item"><span class="info-label">교시</span>${periodLabel}&ensp;(${startTime}~${endTime})</div>
+    <div class="info-item"><span class="info-label">재적</span>${total}명&ensp;<span style="color:#555;font-size:8.5pt">응시 ${seated.length} / 도움실 ${sp.length} / 별도실 ${sep.length}</span></div>
+  </div>
   <table>
     <thead><tr>
       <th style="width:8%">좌석번호</th>
@@ -89,12 +114,11 @@ function roomPage(roster, rg) {
       <th style="width:6%">성별</th>
       <th style="width:8%">결시</th>
       <th style="width:2%;border:none"></th>
-      <th style="width:25%">도움실 응시 학생</th>
-      <th style="width:26%">별도 고사실 응시 학생</th>
+      <th style="width:25.5%">도움실 응시 학생</th>
+      <th style="width:25.5%">별도 고사실 응시 학생</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>
-  <div class="sign">감독관 서명: _________________________ (인)</div>
 </div>`;
 }
 
@@ -146,7 +170,7 @@ function subjectPage(roster) {
     rows += `<tr class="${isDel ? "dim" : ""}">
       <td>${s.classNo ?? ""}</td>
       <td>${s.number ?? ""}</td>
-      <td class="left">${s.name || ""}</td>
+      <td class="left">${extractName(s.name) || ""}</td>
       <td>${s.gender || ""}</td>
       <td>${STATUS_LABEL[s.examStatus] || "-"}</td>
       <td>${s.roomName || "-"}</td>
@@ -204,7 +228,7 @@ function classPage(cls) {
     const cells = sessions.map((sess) => assignCell(st.assignments.get(sess.sessionId))).join("");
     return `<tr>
       <td>${st.number}</td>
-      <td class="left">${st.name}</td>
+      <td class="left">${extractName(st.name)}</td>
       <td>${st.gender}</td>
       ${cells}
     </tr>`;
@@ -233,7 +257,6 @@ export function generateClassRostersHTML(classRosters) {
     @media print { .landscape { size: A4 landscape; } }
   `;
   const pages = classRosters.map(classPage).filter(Boolean).join("\n");
-  // landscape 전용 CSS를 BASE_CSS에 추가
   const html = wrap(pages).replace("</style>", LANDSCAPE_CSS + "</style>");
   return html;
 }
@@ -246,10 +269,9 @@ function waitingPage(period) {
 
   const totalWaiting = classes.reduce((n, c) => n + c.students.length, 0);
 
-  // 학급별 테이블을 2열 그리드로
   const classTables = classes.map((cls) => {
     const rows = cls.students
-      .map((s) => `<tr><td style="width:14%">${s.number}</td><td style="width:50%;text-align:left">${s.name}</td><td style="width:14%">${s.gender}</td></tr>`)
+      .map((s) => `<tr><td style="width:14%">${s.number}</td><td style="width:50%;text-align:left">${extractName(s.name)}</td><td style="width:14%">${s.gender}</td></tr>`)
       .join("");
     return `<div class="class-block">
   <div class="class-title">${cls.grade}학년 ${cls.classNo}반 (${cls.students.length}명)</div>
@@ -280,7 +302,6 @@ export function generateWaitingRostersHTML(waitingRosters) {
 }
 
 // ─── 학생 개인별 시간표 ────────────────────────────────────────────────────────
-// A4 portrait, 4장(2×2) per 페이지
 
 function studentCard(student, schoolName) {
   const { grade, classNo, number, name, exams } = student;
@@ -303,7 +324,7 @@ function studentCard(student, schoolName) {
 
   return `<div class="s-card">
   <div class="s-header">
-    <span class="s-name">${name}</span>
+    <span class="s-name">${extractName(name)}</span>
     <span class="s-info">${grade}학년 ${classNo}반 ${number}번</span>
   </div>
   <div class="s-school">${schoolName}</div>
@@ -328,7 +349,6 @@ export function generateStudentTimetablesHTML(studentTimetables, schoolName = ""
     @media print { @page { size: A4 portrait; margin: 10mm; } }
   `;
 
-  // 4장씩 그룹핑
   const pages = [];
   for (let i = 0; i < studentTimetables.length; i += 4) {
     const group = studentTimetables.slice(i, i + 4);
@@ -342,7 +362,6 @@ export function generateStudentTimetablesHTML(studentTimetables, schoolName = ""
 // ─── 시험시간표 ────────────────────────────────────────────────────────────────
 
 export function generateExamScheduleHTML(sortedRosters, planName = "", schoolName = "OO고등학교") {
-  // Group by dayLabel for rowspan
   const dayGroups = [];
   sortedRosters.forEach((r) => {
     const last = dayGroups[dayGroups.length - 1];

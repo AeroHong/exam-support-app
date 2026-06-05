@@ -26,9 +26,15 @@ function makeStudentId(s) {
   return `${s.grade}${String(s.classNo).padStart(2, "0")}${String(s.number).padStart(2, "0")}`;
 }
 
+/** "홍길동 (1.01 전입)" → "홍길동" */
+function extractName(raw) {
+  if (!raw) return "";
+  return raw.replace(/\s*\(.*?\)\s*$/, "").trim();
+}
+
 /** 도움실/별도실 학생 표기: "10102 김린 (여)" */
 function specialLabel(s) {
-  return `${makeStudentId(s)} ${s.name} (${s.gender || "남"})`;
+  return `${makeStudentId(s)} ${extractName(s.name)} (${s.gender || "남"})`;
 }
 
 function safeSheetName(str) {
@@ -105,7 +111,7 @@ export function generateSessionRoomRosterExcel(subjectRoster, schoolName = "OO�
   };
   const sNameCell = {
     font: { sz: 10 },
-    alignment: { horizontal: "left", vertical: "center" },
+    alignment: { horizontal: "center", vertical: "center" },
     border: THIN_BORDER,
   };
   const sSideCell = {
@@ -113,6 +119,7 @@ export function generateSessionRoomRosterExcel(subjectRoster, schoolName = "OO�
     alignment: { horizontal: "left", vertical: "center" },
     border: THIN_BORDER,
   };
+  const sEmptyCell = {}; // 도움실/별도실 인원 없는 빈 셀 — 테두리 없음
 
   function buildRoomSheet(roomName, seated, specialInRoom, separateInRoom) {
     const totalCount = seated.length + specialInRoom.length + separateInRoom.length;
@@ -122,9 +129,9 @@ export function generateSessionRoomRosterExcel(subjectRoster, schoolName = "OO�
 
     const rows = [];
 
-    // 행 1: 제목
+    // 행 1: 제목 (과목코드 포함)
     rows.push([
-      { v: `${roomName}  ${subjectName}  응시현황표`, t: "s", s: sTitleRow },
+      { v: `${roomName}  ${subjectCell}  응시현황표`, t: "s", s: sTitleRow },
       "", "", "", "", "", "", "",
     ]);
     // 행 2: 빈칸
@@ -174,12 +181,13 @@ export function generateSessionRoomRosterExcel(subjectRoster, schoolName = "OO�
       rows.push([
         { v: s ? s.seatNumber : "", t: s ? "n" : "s", s: sCell },
         { v: s ? makeStudentId(s) : "", t: "s", s: sCell },
-        { v: s ? s.name : "", t: "s", s: sNameCell },
+        { v: s ? extractName(s.name) : "", t: "s", s: sNameCell },
         { v: s ? s.gender : "", t: "s", s: sCell },
         s ? { v: "□", t: "s", s: sCell } : { v: "", t: "s", s: sCell },
         { v: "", t: "s", s: {} },
-        { v: sp ? specialLabel(sp) : "", t: "s", s: sSideCell },
-        { v: sep ? specialLabel(sep) : "", t: "s", s: sSideCell },
+        // 도움실/별도실: 데이터 있는 행만 테두리 표시
+        { v: sp ? specialLabel(sp) : "", t: "s", s: sp ? sSideCell : sEmptyCell },
+        { v: sep ? specialLabel(sep) : "", t: "s", s: sep ? sSideCell : sEmptyCell },
       ]);
     }
 
@@ -195,13 +203,17 @@ export function generateSessionRoomRosterExcel(subjectRoster, schoolName = "OO�
       { wch: 24 }, // 도움실 응시 학생
       { wch: 24 }, // 별도 고사실 응시 학생
     ];
-    ws["!rows"] = [
-      { hpx: 20 }, // 행1
-      { hpx: 6 },  // 행2
-      { hpx: 30 }, // 행3 (줄바꿈 헤더)
-      { hpx: 30 }, // 행4 (날짜+시간 줄바꿈)
-      { hpx: 6 },  // 행5
+    // 전체 행 높이: 메타 행 + 학생 행 모두 설정
+    const rowHeights = [
+      { hpx: 22 }, // 행1 제목
+      { hpx: 6 },  // 행2 빈칸
+      { hpx: 32 }, // 행3 메타 헤더 (줄바꿈)
+      { hpx: 32 }, // 행4 메타 데이터 (줄바꿈)
+      { hpx: 6 },  // 행5 빈칸
+      { hpx: 22 }, // 행6 학생 헤더
     ];
+    for (let i = 0; i < rowCount; i++) rowHeights.push({ hpx: 22 });
+    ws["!rows"] = rowHeights;
     // 제목 병합: A1:H1
     ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 7 } }];
 
