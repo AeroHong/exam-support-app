@@ -32,9 +32,10 @@ function extractName(raw) {
   return raw.replace(/\s*\(.*?\)\s*$/, "").trim();
 }
 
-/** 도움실/별도실 학생 표기: "10102 김린 (여)" */
+/** 도움실/별도실 학생 표기 (seatNumber 있으면 원 좌석번호 포함) */
 function specialLabel(s) {
-  return `${makeStudentId(s)} ${extractName(s.name)} (${s.gender || "남"})`;
+  const seat = s.seatNumber ? ` · ${s.seatNumber}번` : "";
+  return `${makeStudentId(s)} ${extractName(s.name)} (${s.gender || "남"})${seat}`;
 }
 
 function safeSheetName(str) {
@@ -178,10 +179,19 @@ export function generateSessionRoomRosterExcel(subjectRoster, schoolName = "OO�
       const s = seated[i];
       const sp = specialInRoom[i];
       const sep = separateInRoom[i];
+      // 도움실/별도실 자체 시트(origRoomName 존재): 이름 셀에 원 소속 고사실 포함
+      const nameVal = s
+        ? (s.origRoomName
+            ? `${extractName(s.name)}\n← ${s.origRoomName} ${s.origSeatNumber}번`
+            : extractName(s.name))
+        : "";
+      const nameStyle = s?.origRoomName
+        ? { ...sNameCell, alignment: { ...sNameCell.alignment, wrapText: true } }
+        : sNameCell;
       rows.push([
         { v: s ? s.seatNumber : "", t: s ? "n" : "s", s: sCell },
         { v: s ? makeStudentId(s) : "", t: "s", s: sCell },
-        { v: s ? extractName(s.name) : "", t: "s", s: sNameCell },
+        { v: nameVal, t: "s", s: nameStyle },
         { v: s ? s.gender : "", t: "s", s: sCell },
         s ? { v: "□", t: "s", s: sCell } : { v: "", t: "s", s: sCell },
         { v: "", t: "s", s: {} },

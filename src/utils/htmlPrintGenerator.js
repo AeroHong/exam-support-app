@@ -12,8 +12,10 @@ function extractName(raw) {
   return raw.replace(/\s*\(.*?\)\s*$/, "").trim();
 }
 
+// seatNumber: 일반 고사실 명단의 원 좌석번호 / origRoomName: 도움실 시트의 원 소속 고사실
 function specialLabel(s) {
-  return `${makeStudentId(s)} ${extractName(s.name)} (${s.gender || "남"})`;
+  const seat = s.seatNumber ? ` · ${s.seatNumber}번` : "";
+  return `${makeStudentId(s)} ${extractName(s.name)} (${s.gender || "남"})${seat}`;
 }
 
 const BASE_CSS = `
@@ -32,6 +34,7 @@ const BASE_CSS = `
   .info-item:last-child { border-right: none; }
   .info-label { font-weight: bold; background: #e8e8e8; padding: 1px 5px;
     white-space: nowrap; font-size: 8.5pt; }
+  .orig-room { font-size: 7.5pt; color: #555; font-weight: normal; }
 
   /* 공통 테이블 */
   table { width: 100%; border-collapse: collapse; margin-top: 5px; }
@@ -83,13 +86,19 @@ function roomPage(roster, rg) {
     const st = seated[i];
     const spSt = sp[i];
     const sepSt = sep[i];
+    // 도움실/별도실 자체 시트(origRoomName 존재): 이름 셀에 원 소속 고사실 표시
+    const nameDisplay = st
+      ? (st.origRoomName
+          ? `${extractName(st.name)} <span class="orig-room">← ${st.origRoomName} ${st.origSeatNumber}번</span>`
+          : extractName(st.name))
+      : "";
     // 데이터 없는 도움실/별도실 셀은 테두리 제거
     const spTd  = spSt  ? `<td class="left">${specialLabel(spSt)}</td>`  : `<td style="border:none"></td>`;
     const sepTd = sepSt ? `<td class="left">${specialLabel(sepSt)}</td>` : `<td style="border:none"></td>`;
     rows += `<tr>
       <td>${st ? st.seatNumber : ""}</td>
       <td>${st ? makeStudentId(st) : ""}</td>
-      <td class="left">${st ? extractName(st.name) : ""}</td>
+      <td class="left">${nameDisplay}</td>
       <td>${st ? (st.gender || "") : ""}</td>
       <td>${st ? "□" : ""}</td>
       <td style="border:none"></td>

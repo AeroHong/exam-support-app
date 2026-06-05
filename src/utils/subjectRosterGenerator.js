@@ -122,6 +122,7 @@ function autoAssignToRooms(nonDelegation, roomIds, rooms) {
         seatNumber: assignedMap.get(s.id).seatNumber,
       }));
 
+    // specialInRoom/separateInRoom에 원 소속 좌석번호 포함 (고사실 명단 표시용)
     const specialInRoom = inRoom
       .filter((s) => s.examStatus === "special")
       .map((s) => ({
@@ -130,6 +131,7 @@ function autoAssignToRooms(nonDelegation, roomIds, rooms) {
         number: s.number,
         name: s.name,
         gender: s.gender || "",
+        seatNumber: assignedMap.get(s.id)?.seatNumber ?? "",
       }));
 
     const separateInRoom = inRoom
@@ -140,6 +142,7 @@ function autoAssignToRooms(nonDelegation, roomIds, rooms) {
         number: s.number,
         name: s.name,
         gender: s.gender || "",
+        seatNumber: assignedMap.get(s.id)?.seatNumber ?? "",
       }));
 
     return { roomId: room.id, roomName: room.name, students, specialInRoom, separateInRoom };
@@ -269,12 +272,15 @@ export function generateSubjectRosters(plan, students, enrollments, rooms, subje
       },
 
       students: studentsWithRoom,
+      // specialStudents/separateStudents에 원 소속 고사실·좌석 포함 (도움실/별도실 자체 시트용)
       specialStudents: special.map((s) => ({
         grade: s.grade,
         classNo: s.classNo,
         number: s.number,
         name: s.name,
         gender: s.gender || "",
+        origRoomName: assignedMap.get(s.id)?.roomName || "",
+        origSeatNumber: assignedMap.get(s.id)?.seatNumber ?? "",
       })),
       separateStudents: separate.map((s) => ({
         grade: s.grade,
@@ -282,6 +288,8 @@ export function generateSubjectRosters(plan, students, enrollments, rooms, subje
         number: s.number,
         name: s.name,
         gender: s.gender || "",
+        origRoomName: assignedMap.get(s.id)?.roomName || "",
+        origSeatNumber: assignedMap.get(s.id)?.seatNumber ?? "",
       })),
       roomGroups,
     };
