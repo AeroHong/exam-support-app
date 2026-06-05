@@ -18,11 +18,15 @@ const s = {
   badge:             { display: "inline-flex", alignItems: "center", padding: "0.15rem 0.55rem", borderRadius: "999px", fontSize: "0.78rem", fontWeight: 600 },
   badgeGray:         { backgroundColor: "#f3f4f6", color: "#374151" },
   badgeGreen:        { backgroundColor: "#d1fae5", color: "#065f46" },
+  badgeBlue:         { backgroundColor: "#eff6ff", color: "#1d4ed8" },
+  badgeIndigo:       { backgroundColor: "#eef2ff", color: "#4338ca" },
+  badgePurple:       { backgroundColor: "#f5f3ff", color: "#6d28d9" },
   headerActions:     { marginLeft: "auto", display: "flex", gap: "0.5rem" },
   cardBody:          { padding: "1.25rem", display: "grid", gridTemplateColumns: "1fr 280px", gap: "1.25rem" },
   table:             { width: "100%", borderCollapse: "collapse", fontSize: "0.875rem" },
   th:                { padding: "0.45rem 0.7rem", backgroundColor: "#f9fafb", borderBottom: "1px solid #e5e7eb", textAlign: "left", fontWeight: 600, color: "#4b5563", fontSize: "0.8rem" },
   td:                { padding: "0.45rem 0.7rem", borderBottom: "1px solid #f9fafb", color: "#111827", verticalAlign: "middle" },
+  tdGradeHeader:     { padding: "0.5rem 0.7rem", backgroundColor: "#f1f5f9", borderBottom: "1px solid #e2e8f0", borderTop: "1px solid #e2e8f0", color: "#374151", verticalAlign: "middle" },
   select:            { padding: "0.25rem 0.4rem", border: "1px solid #d1d5db", borderRadius: "5px", fontSize: "0.8rem", cursor: "pointer", backgroundColor: "#fff" },
   selectDisabled:    { padding: "0.25rem 0.4rem", border: "1px solid #e5e7eb", borderRadius: "5px", fontSize: "0.8rem", backgroundColor: "#f9fafb", color: "#9ca3af" },
   primaryBtn:        { padding: "0.35rem 0.85rem", backgroundColor: "#4f46e5", color: "#fff", border: "none", borderRadius: "6px", cursor: "pointer", fontSize: "0.82rem", fontWeight: 600 },
@@ -36,6 +40,13 @@ const s = {
   emptyState:        { textAlign: "center", padding: "4rem 2rem", color: "#9ca3af" },
   emptyTitle:        { fontSize: "1rem", fontWeight: 600, color: "#6b7280", marginBottom: "0.5rem" },
   emptyText:         { fontSize: "0.875rem" },
+};
+
+// 학년별 배지 색상
+const GRADE_BADGE_STYLES = {
+  "1": { backgroundColor: "#eff6ff", color: "#1d4ed8" },
+  "2": { backgroundColor: "#f0fdf4", color: "#166534" },
+  "3": { backgroundColor: "#fdf4ff", color: "#7e22ce" },
 };
 
 export default function WaitingRoomAssignmentPage({
@@ -77,62 +88,118 @@ export default function WaitingRoomAssignmentPage({
     return Object.entries(periodAssign).find(([, keys]) => keys.includes(ck))?.[0] ?? "";
   }
 
+  // 학년 내 모든 학급이 동일한 방이면 그 roomId, 아니면 ""
+  function getGradeUniformRoom(periodKey, grade, classes) {
+    const roomIds = classes.map((c) => getAssignedRoom(periodKey, c.grade, c.classNo));
+    const unique = [...new Set(roomIds)];
+    if (unique.length === 1 && unique[0] !== "") return unique[0];
+    return "";
+  }
+
   // 학급을 다른 대기실로 이동
   function handleAssignClass(periodKey, grade, classNo, roomId) {
     const ck = `${grade}-${classNo}`;
     const prev = { ...(waitingAssignments[periodKey] ?? {}) };
-    // 기존 방에서 제거
     Object.keys(prev).forEach((rid) => {
       prev[rid] = (prev[rid] ?? []).filter((k) => k !== ck);
     });
-    // 새 방에 추가
     if (roomId) {
       prev[roomId] = [...(prev[roomId] ?? []), ck];
     }
     onUpdateWaitingAssignments(periodKey, prev);
   }
 
-  // 자동 배정: 학급 인원 기준 대기실 순차 채우기
-  // 같은 교시의 타 학년 기존 배정 인원을 시작값으로 설정해 실제 잔여 용량 기준 배정
+  // 학년 전체를 한 방에 일괄 배정
+  function handleAssignGrade(periodKey, grade, roomId) {
+    const allClassesFull = waitingPeriods.find((p) => p.periodKey === periodKey)?.classes ?? [];
+    const gradeClasses = allClassesFull.filter((c) => String(c.grade) === String(grade));
+    const prev = { ...(waitingAssignments[periodKey] ?? {}) };
+
+    // 해당 학년 학급 전부 기존 방에서 제거
+    gradeClasses.forEach((cls) => {
+      const ck = `${cls.grade}-${cls.classNo}`;
+      Object.keys(prev).forEach((rid) => {
+        prev[rid] = (prev[rid] ?? []).filter((k) => k !== ck);
+      });
+    });
+
+    // 새 방에 일괄 추가
+    if (roomId) {
+      gradeClasses.forEach((cls) => {
+        const ck = `${cls.grade}-${cls.classNo}`;
+        prev[roomId] = [...(prev[roomId] ?? []), ck];
+      });
+    }
+
+    onUpdateWaitingAssignments(periodKey, prev);
+  }
+
+  // 자동 배정: 학년별로 서로 다른 방을 우선 사용
   function handleAutoAssign(periodKey, classes) {
     if (!waitingRooms.length) return;
 
-    // 자동 배정 대상 학급 키 집합
     const assigningKeys = new Set(classes.map((c) => `${c.grade}-${c.classNo}`));
-
-    // 타 학년 기존 배정 인원으로 roomState 초기화
     const allClassesFull = waitingPeriods.find((p) => p.periodKey === periodKey)?.classes ?? [];
-    const roomState = waitingRooms
-      .sort((a, b) => b.capacity - a.capacity)
-      .map((r) => {
-        const otherUsed = allClassesFull
-          .filter((c) => !assigningKeys.has(`${c.grade}-${c.classNo}`))
-          .reduce((acc, c) => {
-            const rid = getAssignedRoom(periodKey, c.grade, c.classNo);
-            return rid === r.id ? acc + c.students.length : acc;
-          }, 0);
-        return { id: r.id, cap: r.capacity || 40, used: otherUsed };
+    const sortedRooms = [...waitingRooms].sort((a, b) => (b.capacity || 40) - (a.capacity || 40));
+
+    // 타 학년(자동 배정 대상 외) 기존 배정으로 점유 계산
+    const otherRoomUsed = {}; // roomId → 인원
+    allClassesFull
+      .filter((c) => !assigningKeys.has(`${c.grade}-${c.classNo}`))
+      .forEach((c) => {
+        const rid = getAssignedRoom(periodKey, c.grade, c.classNo);
+        if (rid) otherRoomUsed[rid] = (otherRoomUsed[rid] ?? 0) + c.students.length;
       });
 
-    // 인원 많은 학급부터 배정
-    const sorted = [...classes].sort((a, b) => b.students.length - a.students.length);
-    // 타 학년 기존 배정은 유지하고 자동 배정 대상만 갱신
+    // 자동 배정 대상 기존 배정 제거
     const result = { ...(waitingAssignments[periodKey] ?? {}) };
-
-    for (const cls of sorted) {
+    for (const cls of classes) {
       const ck = `${cls.grade}-${cls.classNo}`;
-      // 기존 방에서 제거
       Object.keys(result).forEach((rid) => {
         result[rid] = (result[rid] ?? []).filter((k) => k !== ck);
       });
-      // 잔여 용량 있는 방 우선, 없으면 가장 덜 찬 방
-      let target = roomState.reduce((best, r) => (r.used < best.used ? r : best), roomState[0]);
-      for (const r of roomState) {
-        if (r.used + cls.students.length <= r.cap) { target = r; break; }
+    }
+
+    // 학년별로 순차 배정 — 앞 학년이 사용한 방을 뒤 학년에서 제외
+    const grades = [...new Set(classes.map((c) => c.grade))].sort();
+    const roomsUsedByGrade = {}; // grade → Set<roomId>
+
+    for (const grade of grades) {
+      const gradeClasses = classes
+        .filter((c) => c.grade === grade)
+        .sort((a, b) => b.students.length - a.students.length);
+      if (!gradeClasses.length) continue;
+
+      // 다른 학년(이미 배정 완료된 루프 학년 + 타 학년 원본 배정)이 사용 중인 방 집합
+      const occupiedByOthers = new Set([
+        ...Object.entries(roomsUsedByGrade)
+          .filter(([g]) => g !== String(grade))
+          .flatMap(([, rids]) => [...rids]),
+      ]);
+
+      // 비선호(다른 학년 사용 중인) 방 제외한 후보
+      const preferred = sortedRooms.filter((r) => !occupiedByOthers.has(r.id));
+      const pool = preferred.length > 0 ? preferred : sortedRooms;
+
+      const roomState = pool.map((r) => ({
+        id: r.id,
+        cap: r.capacity || 40,
+        used: otherRoomUsed[r.id] ?? 0,
+      }));
+
+      roomsUsedByGrade[String(grade)] = new Set();
+
+      for (const cls of gradeClasses) {
+        const ck = `${cls.grade}-${cls.classNo}`;
+        let target = roomState.reduce((best, r) => (r.used < best.used ? r : best), roomState[0]);
+        for (const r of roomState) {
+          if (r.used + cls.students.length <= r.cap) { target = r; break; }
+        }
+        if (!result[target.id]) result[target.id] = [];
+        result[target.id].push(ck);
+        target.used += cls.students.length;
+        roomsUsedByGrade[String(grade)].add(target.id);
       }
-      if (!result[target.id]) result[target.id] = [];
-      result[target.id].push(ck);
-      target.used += cls.students.length;
     }
 
     onUpdateWaitingAssignments(periodKey, result);
@@ -146,7 +213,6 @@ export default function WaitingRoomAssignmentPage({
       .filter((p) => p.classes.length > 0);
   }, [waitingPeriods, gradeFilter]);
 
-  // 빈 상태 처리
   // 이전 단계 미확정 학년 경고
   const scheduleNotReady = ["1", "2", "3"].filter(
     (g) => (examPlanReady?.[g] || plan.sessions.some((s) => String(s.grade) === g))
@@ -203,7 +269,7 @@ export default function WaitingRoomAssignmentPage({
     <div style={s.page}>
       <div style={s.header}>
         <h2 style={s.title}>대기실 배정</h2>
-        <p style={s.subtitle}>교시별 시험 미응시 학생을 대기실에 배정합니다.</p>
+        <p style={s.subtitle}>교시별 시험 미응시 학생을 대기실에 배정합니다. 자동 배정은 학년별로 다른 대기실을 우선 사용합니다.</p>
       </div>
 
       {/* 학년 필터 */}
@@ -221,10 +287,19 @@ export default function WaitingRoomAssignmentPage({
 
       {filteredPeriods.map((period) => {
         const confirmed = waitingConfirmed?.[period.periodKey] ?? false;
-        const totalWaiting = period.classes.reduce((acc, c) => acc + c.students.length, 0);
 
-        // 전체 학년 기준 집계 — 필터와 무관하게 실제 총 점유 인원
+        // 전체 학년 기준 집계 (필터 무관)
         const allClassesFull = waitingPeriods.find((p) => p.periodKey === period.periodKey)?.classes ?? period.classes;
+
+        // 학년별 대기 인원
+        const gradeTotals = {}; // grade → 인원
+        allClassesFull.forEach((cls) => {
+          const g = String(cls.grade);
+          gradeTotals[g] = (gradeTotals[g] ?? 0) + cls.students.length;
+        });
+        const allTotalWaiting = Object.values(gradeTotals).reduce((acc, n) => acc + n, 0);
+
+        // 대기실 점유 집계
         const roomUsageAll = {};       // roomId → 총 인원
         const roomUsageByGrade = {};   // roomId → { grade: 인원 }
         allClassesFull.forEach((cls) => {
@@ -247,6 +322,18 @@ export default function WaitingRoomAssignmentPage({
           .filter((c) => !getAssignedRoom(period.periodKey, c.grade, c.classNo))
           .reduce((acc, c) => acc + c.students.length, 0);
 
+        // 학년별 그룹 (테이블 렌더링용)
+        const gradeGroups = [];
+        period.classes.forEach((cls) => {
+          const last = gradeGroups[gradeGroups.length - 1];
+          if (!last || last.grade !== cls.grade) {
+            gradeGroups.push({ grade: cls.grade, classes: [cls] });
+          } else {
+            last.classes.push(cls);
+          }
+        });
+        const isMultiGrade = gradeGroups.length > 1;
+
         return (
           <div key={period.periodKey} style={confirmed ? s.cardConfirmed : s.card}>
             {/* 카드 헤더 */}
@@ -257,7 +344,14 @@ export default function WaitingRoomAssignmentPage({
                   {period.startTime}{period.endTime ? ` ~ ${period.endTime}` : ""}
                 </span>
               )}
-              <span style={{ ...s.badge, ...s.badgeGray }}>대기 {totalWaiting}명</span>
+              {/* 총 인원 */}
+              <span style={{ ...s.badge, ...s.badgeGray }}>대기 {allTotalWaiting}명</span>
+              {/* 학년별 인원 (2개 이상 학년일 때만 표시) */}
+              {isMultiGrade && Object.entries(gradeTotals).sort().map(([g, cnt]) => (
+                <span key={g} style={{ ...s.badge, ...(GRADE_BADGE_STYLES[g] ?? s.badgeGray) }}>
+                  {g}학년 {cnt}명
+                </span>
+              ))}
               {unassignedCount > 0 && (
                 <span style={{ ...s.badge, backgroundColor: "#fff7ed", color: "#b45309" }}>
                   미배정 {unassignedCount}명
@@ -311,32 +405,71 @@ export default function WaitingRoomAssignmentPage({
                   </tr>
                 </thead>
                 <tbody>
-                  {period.classes.map((cls) => {
-                    const assigned = getAssignedRoom(period.periodKey, cls.grade, cls.classNo);
+                  {gradeGroups.map(({ grade, classes: gradeClasses }) => {
+                    const gradeTotal = gradeClasses.reduce((acc, c) => acc + c.students.length, 0);
+                    const uniformRoom = getGradeUniformRoom(period.periodKey, grade, gradeClasses);
+                    const badgeStyle = GRADE_BADGE_STYLES[String(grade)] ?? s.badgeGray;
+
                     return (
-                      <tr key={`${cls.grade}-${cls.classNo}`}>
-                        <td style={s.td}>{cls.grade}학년 {cls.classNo}반</td>
-                        <td style={{ ...s.td, textAlign: "right", fontWeight: 600 }}>
-                          {cls.students.length}명
-                        </td>
-                        <td style={s.td}>
-                          <select
-                            style={confirmed ? s.selectDisabled : s.select}
-                            value={assigned}
-                            disabled={confirmed}
-                            onChange={(e) =>
-                              handleAssignClass(period.periodKey, cls.grade, cls.classNo, e.target.value)
-                            }
-                          >
-                            <option value="">-- 미배정 --</option>
-                            {waitingRooms.map((r) => (
-                              <option key={r.id} value={r.id}>
-                                {r.name} (정원 {r.capacity})
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                      </tr>
+                      <>
+                        {/* 학년 그룹 헤더 행 */}
+                        <tr key={`grade-hdr-${grade}`}>
+                          <td style={s.tdGradeHeader} colSpan={2}>
+                            <span style={{ ...s.badge, ...badgeStyle, marginRight: "0.5rem" }}>
+                              {grade}학년
+                            </span>
+                            <span style={{ fontSize: "0.8rem", color: "#6b7280" }}>
+                              {gradeClasses.length}개 학급 · 총 {gradeTotal}명
+                            </span>
+                          </td>
+                          <td style={s.tdGradeHeader}>
+                            <select
+                              style={confirmed ? s.selectDisabled : { ...s.select, fontSize: "0.75rem", color: "#374151" }}
+                              value={uniformRoom}
+                              disabled={confirmed}
+                              onChange={(e) => handleAssignGrade(period.periodKey, grade, e.target.value)}
+                            >
+                              <option value="">— {grade}학년 일괄 배정 —</option>
+                              {waitingRooms.map((r) => (
+                                <option key={r.id} value={r.id}>
+                                  {r.name} (정원 {r.capacity})
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                        </tr>
+                        {/* 학급별 행 */}
+                        {gradeClasses.map((cls) => {
+                          const assigned = getAssignedRoom(period.periodKey, cls.grade, cls.classNo);
+                          return (
+                            <tr key={`${cls.grade}-${cls.classNo}`}>
+                              <td style={{ ...s.td, paddingLeft: "1.5rem", color: "#6b7280" }}>
+                                {cls.classNo}반
+                              </td>
+                              <td style={{ ...s.td, textAlign: "right", fontWeight: 600 }}>
+                                {cls.students.length}명
+                              </td>
+                              <td style={s.td}>
+                                <select
+                                  style={confirmed ? s.selectDisabled : s.select}
+                                  value={assigned}
+                                  disabled={confirmed}
+                                  onChange={(e) =>
+                                    handleAssignClass(period.periodKey, cls.grade, cls.classNo, e.target.value)
+                                  }
+                                >
+                                  <option value="">-- 미배정 --</option>
+                                  {waitingRooms.map((r) => (
+                                    <option key={r.id} value={r.id}>
+                                      {r.name} (정원 {r.capacity})
+                                    </option>
+                                  ))}
+                                </select>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </>
                     );
                   })}
                 </tbody>
@@ -360,6 +493,9 @@ export default function WaitingRoomAssignmentPage({
                     const pctAll      = cap > 0 ? Math.min(100, (usedAll / cap) * 100) : 0;
                     const pctOther    = cap > 0 ? Math.min(100, (usedOther / cap) * 100) : 0;
                     const pctFiltered = cap > 0 ? Math.min(100, (usedFiltered / cap) * 100) : 0;
+                    const gradeBreakdown = roomUsageByGrade[room.id] ?? {};
+                    const gradeKeys = Object.keys(gradeBreakdown).sort();
+
                     return (
                       <div key={room.id} style={{ ...s.roomRow, flexWrap: "wrap", rowGap: "0.1rem" }}>
                         <span style={{ minWidth: "5rem", fontWeight: 600, fontSize: "0.82rem" }}>
@@ -377,21 +513,17 @@ export default function WaitingRoomAssignmentPage({
                             <div style={{ width: `${gradeFilter !== "all" ? pctFiltered : pctAll}%`, backgroundColor: over ? "#dc2626" : "#4f46e5" }} />
                           </div>
                         </div>
-                        {(() => {
-                          const gradeBreakdown = roomUsageByGrade[room.id] ?? {};
-                          const grades = Object.keys(gradeBreakdown).sort();
-                          if (grades.length < 2) return null;
-                          return (
-                            <span style={{ width: "100%", fontSize: "0.68rem", color: "#6b7280", paddingLeft: "5.5rem" }}>
-                              {grades.map((g) => (
-                                <span key={g} style={{ marginRight: "0.6rem" }}>
-                                  <span style={{ color: gradeFilter !== "all" && g === gradeFilter ? "#4f46e5" : "#7c3aed" }}>■</span>
-                                  {" "}{g}학년 {gradeBreakdown[g]}명
-                                </span>
-                              ))}
-                            </span>
-                          );
-                        })()}
+                        {/* 학년별 인원 분리 표시 (2개 이상 학년 사용 시) */}
+                        {gradeKeys.length >= 2 && (
+                          <span style={{ width: "100%", fontSize: "0.68rem", color: "#6b7280", paddingLeft: "5.5rem" }}>
+                            {gradeKeys.map((g) => (
+                              <span key={g} style={{ marginRight: "0.6rem" }}>
+                                <span style={{ color: (GRADE_BADGE_STYLES[g] ?? {}).color ?? "#7c3aed" }}>■</span>
+                                {" "}{g}학년 {gradeBreakdown[g]}명
+                              </span>
+                            ))}
+                          </span>
+                        )}
                       </div>
                     );
                   })}
