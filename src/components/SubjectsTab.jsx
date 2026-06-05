@@ -23,6 +23,22 @@ const _BLOCK_PAT = /[\[\(]택\s*(\d+)\s*[\]\)]/;
 const _VALID_CT = new Set(["공통", "일반", "융합", "진로"]);
 const _GS_COLS = [[1, 1], [1, 2], [2, 1], [2, 2], [3, 1], [3, 2]];
 
+// 교과군 정규화: 공백·줄바꿈·가운뎃점 제거 후 SUBJECT_GROUPS 매칭
+function _normSubjectGroup(raw) {
+  if (!raw) return raw;
+  const strip = (s) => s.replace(/[\s\r\n··‧・()（）]/g, "");
+  const cleaned = strip(raw);
+  if (SUBJECT_GROUPS.includes(cleaned)) return cleaned;
+  const match = SUBJECT_GROUPS.find((g) => strip(g) === cleaned);
+  if (match) return match;
+  // 포함 관계 매칭 (교육청 표기가 더 긴 경우)
+  const partial = SUBJECT_GROUPS.find((g) => {
+    const gn = strip(g);
+    return cleaned.includes(gn) || gn.includes(cleaned);
+  });
+  return partial ?? raw;
+}
+
 // ─── 스타일 ──────────────────────────────────────────────────────────────────
 
 const s = {
@@ -210,7 +226,7 @@ function parseEducationExcel(arrayBuffer, targetGrade) {
     const newCat = _normCat(g(c, 0));
     if (newCat) curCat = newCat;
     const rawSg = g(c, sgCol);
-    if (rawSg && !_VALID_CT.has(rawSg)) curSg = rawSg;
+    if (rawSg && !_VALID_CT.has(rawSg)) curSg = _normSubjectGroup(rawSg);
 
     const name = g(c, nmCol);
     const ct = g(c, ctCol);
