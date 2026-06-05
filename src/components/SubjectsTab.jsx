@@ -281,7 +281,7 @@ function parseEducationExcel(arrayBuffer, targetGrade) {
 
 // ─── SubjectModal (추가/수정) ──────────────────────────────────────────────────
 
-function SubjectModal({ subject, onClose, onSave, classesByGrade }) {
+function SubjectModal({ subject, onClose, onSave, classesByGrade, extraSubjectGroups = [] }) {
   const isEdit = Boolean(subject?.id);
   const curYear = new Date().getFullYear();
   const now = new Date();
@@ -410,7 +410,7 @@ function SubjectModal({ subject, onClose, onSave, classesByGrade }) {
             <div>
               <label style={s.label}>교과(군)</label>
               <select style={s.mSelect} value={form.subjectGroup} onChange={e => set("subjectGroup", e.target.value)}>
-                {SUBJECT_GROUPS.map(g => <option key={g}>{g}</option>)}
+                {[...new Set([...SUBJECT_GROUPS, ...extraSubjectGroups])].map(g => <option key={g}>{g}</option>)}
               </select>
             </div>
             <div>
@@ -1251,6 +1251,7 @@ export default function SubjectsTab({ schoolId, onDataChanged, readOnly = false 
           onClose={() => { setModalOpen(false); setEditTarget(null); }}
           onSave={handleSaveSubject}
           classesByGrade={classesByGrade}
+          extraSubjectGroups={allSg.filter(sg => sg !== "전체")}
         />
       )}
 
