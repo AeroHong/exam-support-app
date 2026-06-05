@@ -170,9 +170,23 @@ export function generateSubjectRosters(plan, students, enrollments, rooms, subje
   const placed = plan.sessions.filter((s) => s.dayId && s.periodId);
 
   return placed.map((session) => {
-    // subjectId 우선 매칭, 실패 시 과목명+학년으로 fallback
-    const subject = subjects.find((s) => s.id === session.subjectId)
-                 || subjects.find((s) => s.name === session.subjectName && String(s.grade) === String(session.grade));
+    // 매칭 우선순위:
+    // 1. subjectId 정확 매칭
+    // 2. 과목명+학년+학기 (semester가 세션에 저장된 경우)
+    // 3. 과목코드+학년 (subjectCode가 있는 경우)
+    // 4. 과목명+학년 (마지막 fallback)
+    const subject =
+      subjects.find((s) => s.id === session.subjectId)
+      || (session.semester && subjects.find((s) =>
+          s.name === session.subjectName &&
+          String(s.grade) === String(session.grade) &&
+          String(s.semester) === String(session.semester)
+        ))
+      || (session.subjectCode && subjects.find((s) =>
+          s.subjectCode === session.subjectCode &&
+          String(s.grade) === String(session.grade)
+        ))
+      || subjects.find((s) => s.name === session.subjectName && String(s.grade) === String(session.grade));
     const day = plan.days?.find((d) => d.id === session.dayId);
     const period = plan.periods?.find((p) => p.id === session.periodId);
 

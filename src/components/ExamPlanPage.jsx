@@ -628,6 +628,7 @@ export default function ExamPlanPage({ plan, onPlanChange, subjects, students, e
           subjectId:   subject.id,
           subjectName: subject.name,
           subjectCode: subject.subjectCode ?? "",
+          semester:    subject.semester ?? "",
           grade:       String(subject.grade),
           dayId:       existing?.dayId ?? "",
           periodId:    existing?.periodId ?? "",
