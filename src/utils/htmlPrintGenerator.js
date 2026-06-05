@@ -100,7 +100,7 @@ function roomPage(roster, rg) {
 
   return `<div class="page">
   <div class="doc-title">${subjectFull} 응시현황표</div>
-  <div class="doc-subtitle">${rg.roomName}&emsp;${grade}학년&emsp;${isEssay ? "서논술형" : "선택형"}</div>
+  <div class="doc-subtitle">${rg.roomName}&emsp;${grade}학년</div>
   <div class="info-strip">
     <div class="info-item"><span class="info-label">고사일</span>${dayLabel}</div>
     <div class="info-item"><span class="info-label">교시</span>${periodLabel}&ensp;(${startTime}~${endTime})</div>
