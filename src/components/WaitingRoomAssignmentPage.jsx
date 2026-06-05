@@ -134,16 +134,22 @@ export default function WaitingRoomAssignmentPage({
     onUpdateWaitingAssignments(periodKey, prev);
   }
 
-  // 자동 배정: 학년별로 서로 다른 방을 우선 사용
+  // 자동 배정: 이미 배정된 학급은 유지, 미배정 학급만 학년별로 분리 배정
   function handleAutoAssign(periodKey, classes) {
     if (!waitingRooms.length) return;
 
-    const assigningKeys = new Set(classes.map((c) => `${c.grade}-${c.classNo}`));
+    // 이미 배정된 학급은 건너뜀 — 미배정만 대상
+    const unassigned = classes.filter(
+      (c) => !getAssignedRoom(periodKey, c.grade, c.classNo)
+    );
+    if (!unassigned.length) return;
+
+    const assigningKeys = new Set(unassigned.map((c) => `${c.grade}-${c.classNo}`));
     const allClassesFull = waitingPeriods.find((p) => p.periodKey === periodKey)?.classes ?? [];
     const sortedRooms = [...waitingRooms].sort((a, b) => (b.capacity || 40) - (a.capacity || 40));
 
-    // 타 학년(자동 배정 대상 외) 기존 배정으로 점유 계산
-    const otherRoomUsed = {}; // roomId → 인원
+    // 자동 배정 대상이 아닌 모든 학급(이미 배정된 학급 + 타 학년)의 방 점유
+    const otherRoomUsed = {};
     allClassesFull
       .filter((c) => !assigningKeys.has(`${c.grade}-${c.classNo}`))
       .forEach((c) => {
@@ -151,33 +157,36 @@ export default function WaitingRoomAssignmentPage({
         if (rid) otherRoomUsed[rid] = (otherRoomUsed[rid] ?? 0) + c.students.length;
       });
 
-    // 자동 배정 대상 기존 배정 제거
+    // 기존 배정 그대로 유지 (미배정 학급만 새로 추가)
     const result = { ...(waitingAssignments[periodKey] ?? {}) };
-    for (const cls of classes) {
-      const ck = `${cls.grade}-${cls.classNo}`;
-      Object.keys(result).forEach((rid) => {
-        result[rid] = (result[rid] ?? []).filter((k) => k !== ck);
-      });
-    }
 
-    // 학년별로 순차 배정 — 앞 학년이 사용한 방을 뒤 학년에서 제외
-    const grades = [...new Set(classes.map((c) => c.grade))].sort();
-    const roomsUsedByGrade = {}; // grade → Set<roomId>
+    // 이미 배정된 학급의 방 정보를 학년별로 사전 등록 → 미배정 학년이 같은 방 회피
+    const roomsUsedByGrade = {};
+    allClassesFull
+      .filter((c) => !assigningKeys.has(`${c.grade}-${c.classNo}`))
+      .forEach((c) => {
+        const rid = getAssignedRoom(periodKey, c.grade, c.classNo);
+        if (!rid) return;
+        const g = String(c.grade);
+        if (!roomsUsedByGrade[g]) roomsUsedByGrade[g] = new Set();
+        roomsUsedByGrade[g].add(rid);
+      });
+
+    // 학년별 순차 배정 — 앞 학년이 사용한 방을 뒤 학년에서 제외
+    const grades = [...new Set(unassigned.map((c) => c.grade))].sort();
 
     for (const grade of grades) {
-      const gradeClasses = classes
+      const gradeClasses = unassigned
         .filter((c) => c.grade === grade)
         .sort((a, b) => b.students.length - a.students.length);
       if (!gradeClasses.length) continue;
 
-      // 다른 학년(이미 배정 완료된 루프 학년 + 타 학년 원본 배정)이 사용 중인 방 집합
-      const occupiedByOthers = new Set([
-        ...Object.entries(roomsUsedByGrade)
+      const occupiedByOthers = new Set(
+        Object.entries(roomsUsedByGrade)
           .filter(([g]) => g !== String(grade))
           .flatMap(([, rids]) => [...rids]),
-      ]);
+      );
 
-      // 비선호(다른 학년 사용 중인) 방 제외한 후보
       const preferred = sortedRooms.filter((r) => !occupiedByOthers.has(r.id));
       const pool = preferred.length > 0 ? preferred : sortedRooms;
 
@@ -187,7 +196,7 @@ export default function WaitingRoomAssignmentPage({
         used: otherRoomUsed[r.id] ?? 0,
       }));
 
-      roomsUsedByGrade[String(grade)] = new Set();
+      if (!roomsUsedByGrade[String(grade)]) roomsUsedByGrade[String(grade)] = new Set();
 
       for (const cls of gradeClasses) {
         const ck = `${cls.grade}-${cls.classNo}`;
