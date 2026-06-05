@@ -182,7 +182,7 @@ export function generateSessionRoomRosterExcel(subjectRoster, schoolName = "OO�
       // 도움실/별도실 자체 시트(origRoomName 존재): 이름 셀에 원 소속 고사실 포함
       const nameVal = s
         ? (s.origRoomName
-            ? `${extractName(s.name)}\n← ${s.origRoomName} ${s.origSeatNumber}번`
+            ? `${extractName(s.name)}\n← ${s.origRoomName} ${s.origSeatNumber}`
             : extractName(s.name))
         : "";
       const nameStyle = s?.origRoomName

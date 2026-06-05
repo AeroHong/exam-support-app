@@ -27,12 +27,20 @@ const BASE_CSS = `
   /* 고사실별 응시 현황표 헤더 */
   .doc-title { font-size: 20pt; font-weight: bold; text-align: center; margin-bottom: 8px; letter-spacing: -0.3px;
     border-bottom: 1.5px solid #333; padding-bottom: 6px; }
-  .info-strip { display: flex; border: 1.5px solid #333; margin-bottom: 8px; }
+  .info-strip { border: 1.5px solid #333; margin-bottom: 8px; }
+  .info-row1 { display: flex; border-bottom: 1px solid #555; }
   .info-item { flex: 1; display: flex; align-items: center; gap: 6px;
     padding: 5px 9px; border-right: 1px solid #555; font-size: 9pt; }
   .info-item:last-child { border-right: none; }
   .info-label { font-weight: bold; background: #e8e8e8; padding: 1px 5px;
     white-space: nowrap; font-size: 8.5pt; }
+  .info-row2 { display: flex; align-items: center; gap: 10px;
+    padding: 6px 12px; background: #f0f0f0; }
+  .count-total { font-size: 15pt; font-weight: bold; color: #111; white-space: nowrap; }
+  .count-label { font-size: 9pt; color: #444; margin-right: 8px; }
+  .count-sep { color: #bbb; margin: 0 4px; }
+  .count-detail { font-size: 9pt; color: #333; }
+  .count-detail strong { color: #111; }
   .orig-room { font-size: 7.5pt; color: #555; font-weight: normal; }
 
   /* 공통 테이블 */
@@ -44,7 +52,7 @@ const BASE_CSS = `
   .subtitle { text-align: center; font-size: 9pt; margin-bottom: 8px; }
   .meta { font-size: 9pt; margin-bottom: 3px; }
   .dim { color: #888; }
-  @media print { @page { margin: 8mm; } }
+  @media print { @page { size: A4 portrait; margin: 8mm; } }
 `;
 
 function wrap(bodyHtml) {
@@ -66,14 +74,30 @@ export function openPrintWindow(html) {
   }
   win.document.write(html);
   win.document.close();
-  setTimeout(() => win.print(), 400);
+  setTimeout(() => {
+    // A4 인쇄 가능 높이: (297mm - 8mm*2 여백) @ 96dpi ≈ 1059px
+    // 각 .page가 이를 초과하면 zoom으로 자동 축소 → 한 페이지 보장
+    const MAX_H = 1059;
+    win.document.querySelectorAll(".page").forEach((page) => {
+      const h = page.scrollHeight;
+      if (h > MAX_H) page.style.zoom = (MAX_H / h).toFixed(4);
+    });
+    setTimeout(() => win.print(), 200);
+  }, 300);
 }
 
 // ─── 고사실별 응시 현황표 ──────────────────────────────────────────────────────
 
+const GRADE_COLOR = {
+  1: { light: "#fef9c3", mid: "#fde047", accent: "#92400e" }, // 노란색
+  2: { light: "#dcfce7", mid: "#86efac", accent: "#14532d" }, // 녹색
+  3: { light: "#dbeafe", mid: "#93c5fd", accent: "#1e3a8a" }, // 파란색
+};
+
 function roomPage(roster, rg) {
   const { subjectName, subjectCode, dayLabel, periodLabel, startTime, endTime, grade, isEssay } = roster;
   const subjectFull = `${subjectName}${subjectCode ? ` (${subjectCode})` : ""}`;
+  const gc = GRADE_COLOR[grade] || GRADE_COLOR[1];
   const seated = rg.students;
   const sp = rg.specialInRoom || [];
   const sep = rg.separateInRoom || [];
@@ -88,7 +112,7 @@ function roomPage(roster, rg) {
     // 도움실/별도실 자체 시트(origRoomName 존재): 이름 셀에 원 소속 고사실 표시
     const nameDisplay = st
       ? (st.origRoomName
-          ? `${extractName(st.name)} <span class="orig-room">← ${st.origRoomName} ${st.origSeatNumber}번</span>`
+          ? `${extractName(st.name)} <span class="orig-room">← ${st.origRoomName} ${st.origSeatNumber}</span>`
           : extractName(st.name))
       : "";
     // 데이터 없는 도움실/별도실 셀은 테두리 제거
@@ -107,22 +131,28 @@ function roomPage(roster, rg) {
   }
 
   return `<div class="page">
-  <div class="doc-title">${grade}학년 ${subjectFull} ${rg.roomName} 응시현황표</div>
-  <div class="info-strip">
-    <div class="info-item"><span class="info-label">고사일</span>${dayLabel}</div>
-    <div class="info-item"><span class="info-label">교시</span>${periodLabel}&ensp;(${startTime}~${endTime})</div>
-    <div class="info-item"><span class="info-label">재적</span>${total}명&ensp;<span style="color:#555;font-size:8.5pt">응시 ${seated.length} / 도움실 ${sp.length} / 별도실 ${sep.length}</span></div>
+  <div class="doc-title" style="border-color:${gc.mid}">${grade}학년 ${subjectFull} ${rg.roomName} 응시현황표</div>
+  <div class="info-strip" style="border-color:${gc.mid}">
+    <div class="info-row1" style="border-color:${gc.mid}">
+      <div class="info-item" style="border-color:${gc.mid}"><span class="info-label">고사일</span>${dayLabel}</div>
+      <div class="info-item"><span class="info-label">교시</span>${periodLabel}&ensp;(${startTime} ~ ${endTime})</div>
+    </div>
+    <div class="info-row2" style="background:${gc.light}">
+      <span class="count-total" style="color:${gc.accent}">재적 ${total}명</span>
+      <span class="count-label">|</span>
+      <span class="count-detail">응시 <strong>${seated.length}</strong>명<span class="count-sep">·</span>도움실 <strong>${sp.length}</strong>명<span class="count-sep">·</span>별도실 <strong>${sep.length}</strong>명</span>
+    </div>
   </div>
   <table>
     <thead><tr>
-      <th style="width:8%">좌석번호</th>
-      <th style="width:10%">학번</th>
-      <th style="width:15%">이름</th>
-      <th style="width:6%">성별</th>
-      <th style="width:8%">결시</th>
+      <th style="width:12%;background:${gc.light}">좌석번호</th>
+      <th style="width:12%;background:${gc.light}">학번</th>
+      <th style="width:22%;background:${gc.light}">이름</th>
+      <th style="width:7%;background:${gc.light}">성별</th>
+      <th style="width:9%;background:${gc.light}">결시</th>
       <th style="width:2%;border:none"></th>
-      <th style="width:25.5%">도움실 응시 학생</th>
-      <th style="width:25.5%">별도 고사실 응시 학생</th>
+      <th style="width:18%;background:${gc.light}">도움실 응시</th>
+      <th style="width:18%;background:${gc.light}">별도 고사실 응시</th>
     </tr></thead>
     <tbody>${rows}</tbody>
   </table>
