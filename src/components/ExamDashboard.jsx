@@ -3,6 +3,7 @@ import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { EXAM_TYPES, getDefaultPlan } from "../data/defaults";
 import { firebaseDb } from "../lib/firebase";
 import { archivePlan, deletePlan, loadPlanList, savePlan } from "../lib/firestorePlanner";
+import AppFooter from "./AppFooter";
 
 // ── 헬퍼 ────────────────────────────────────────────────────────────────────
 
@@ -535,6 +536,8 @@ export default function ExamDashboard({
           onClose={() => setCreateOpen(false)}
         />
       )}
+
+      <AppFooter />
 
     </div>
   );
